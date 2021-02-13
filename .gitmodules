@@ -1,0 +1,9 @@
+[submodule "dooked/json"]
+	path = dooked/json
+	url = https://github.com/nlohmann/json
+[submodule "dooked/spdlog"]
+	path = dooked/spdlog
+	url = https://github.com/gabime/spdlog
+[submodule "dooked/CLI11"]
+	path = dooked/CLI11
+	url = https://github.com/CLIUtils/CLI11

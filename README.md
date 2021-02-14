@@ -17,6 +17,8 @@ export BOOST_ROOT="/usr/home/boost_1_75_0/"
 printenv | grep BOOST_ROOT
 ```
 
+Alternatively, you can add the `boost` library via various `apt` respositorys.
+
 Then clone `dooked` and compile it, as follows:
 
 ```

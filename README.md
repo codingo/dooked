@@ -20,7 +20,7 @@ printenv | grep BOOST_ROOT
 Then clone `dooked` and compile it, as follows:
 
 ```
-git clone "https://github.com/iamOgunyinka/dooked.git"
+git clone "https://github.com/codingo/dooked.git"
 cd dooked
 git submodule update --init
 cd dooked/CLI11 && git checkout tags/v1.9.1

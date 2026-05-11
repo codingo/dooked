@@ -39,3 +39,44 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Runtime regex checks
+
+Use `--checks <file>` to load custom alerts from a JSON config and match them
+against collected domain, DNS, HTTP, or page content fields.
+
+```json
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "(dev|test)",
+      "alert": "domain name contains an environment marker",
+      "ignore_case": true
+    },
+    {
+      "field": "response_body",
+      "regex": "copyright 2025",
+      "alert": "page may contain an outdated copyright banner",
+      "ignore_case": true
+    }
+  ]
+}
+```
+
+Supported fields:
+
+- `domain` / `domain_name`
+- `type` / `record_type`
+- `info` / `rdata`
+- `ttl`
+- `content_length`
+- `http_code`
+- `http_status` / `code_string`
+- `response_body` / `body` / `page_content` / `content`
+
+Example:
+
+```sh
+dooked -i domains.txt --checks checks.json
+```

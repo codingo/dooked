@@ -39,3 +39,33 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Runtime regex checks
+
+Use `--checks <file>` to alert on result fields at runtime. The checks file can
+be either a JSON array or an object with a `checks` array:
+
+```json
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "dev|test",
+      "alert": "domain contains an environment marker",
+      "ignore_case": true
+    },
+    {
+      "field": "info",
+      "regex": "v=spf1",
+      "alert": "SPF TXT record found",
+      "ignore_case": true
+    }
+  ]
+}
+```
+
+Supported fields are `domain`, `domain_name`, `type`, `record_type`, `info`,
+`rdata`, `ttl`, `content_length`, `http_code`, `code_string`, and
+`http_status`. You can also check HTTP page content with `response_body`,
+`body`, `page_content`, or `content`; dooked keeps at most the first 64 KiB in
+memory for matching and does not write page content to the JSON output.

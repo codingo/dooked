@@ -10,6 +10,14 @@ extern bool silent;
 
 namespace dooked {
 
+std::string response_body_for_checks(std::string const &body) {
+  constexpr std::size_t max_body_size = 64 * 1024;
+  if (body.size() > max_body_size) {
+    return body.substr(0, max_body_size);
+  }
+  return body;
+}
+
 http_request_handler_t::http_request_handler_t(net::io_context &io_context,
                                                std::string domain_name)
     : io_{io_context}, domain_{std::move(domain_name)} {}
@@ -166,6 +174,9 @@ void http_request_handler_t::on_data_received(
     }
 #endif // _DEBUG
     response_int = response_type_e::unknown_response;
+  }
+  if (status_code_simple != 3) {
+    response_string = response_body_for_checks(response_->body());
   }
 
   int content_length{};
@@ -387,6 +398,9 @@ void https_request_handler_t::on_data_received(
     response_int = response_type_e::server_error;
   } else {
     response_int = response_type_e::unknown_response;
+  }
+  if (status_code_simple != 3) {
+    response_string = response_body_for_checks(response_->body());
   }
 
   int content_length = 0;

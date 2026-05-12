@@ -31,6 +31,8 @@ int main(int argc, char **argv) {
   app.add_option("-t,--threads", cli_args.thread_count,
                  "total threads to use(default: " +
                      std::to_string(DOOKED_SUPPORTED_THREADS) + ")");
+  app.add_option("--checks", cli_args.regex_checks_filename,
+                 "JSON file with runtime regex checks to run against results");
   app.add_option(
       "-c,--content-length", cli_args.content_length,
       "show content lengths that changed more than --content-length");

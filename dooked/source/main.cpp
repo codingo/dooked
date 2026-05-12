@@ -34,6 +34,8 @@ int main(int argc, char **argv) {
   app.add_option(
       "-c,--content-length", cli_args.content_length,
       "show content lengths that changed more than --content-length");
+  app.add_option("--checks,--check-config", cli_args.regex_checks_filename,
+                 "JSON file with runtime regex checks");
   app.add_flag("-d,--include-date", cli_args.include_date,
                "append present datetime(-ddMMyyyy_hhmmss) in output name");
   app.add_flag(

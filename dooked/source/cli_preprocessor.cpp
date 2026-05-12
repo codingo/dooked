@@ -4,8 +4,11 @@
 #include "utils/exceptions.hpp"
 #include "utils/random_utils.hpp"
 #include "utils/string_utils.hpp"
+#include <algorithm>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <cctype>
+#include <fstream>
 #include <set>
 #include <spdlog/spdlog.h>
 
@@ -17,6 +20,196 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+
+std::string normalize_check_field(std::string field) {
+  std::transform(field.begin(), field.end(), field.begin(), [](char ch) {
+    if (ch == '-' || ch == ' ') {
+      return '_';
+    }
+    return (char)std::tolower((unsigned char)ch);
+  });
+  return field;
+}
+
+bool is_domain_check_field(std::string const &field) {
+  return field == "domain" || field == "domain_name" ||
+         field == "content_length" || field == "http_code" ||
+         field == "code_string" || field == "http_status" ||
+         field == "response_body" || field == "body" ||
+         field == "page_content" || field == "content";
+}
+
+bool is_record_check_field(std::string const &field) {
+  return field == "type" || field == "record_type" || field == "info" ||
+         field == "rdata" || field == "ttl";
+}
+
+bool is_supported_check_field(std::string const &field) {
+  return is_domain_check_field(field) || is_record_check_field(field);
+}
+
+std::optional<std::string>
+domain_check_value(std::string const &field, std::string const &domain_name,
+                   http_response_t const &http_result) {
+  if (field == "domain" || field == "domain_name") {
+    return domain_name;
+  }
+  if (field == "content_length") {
+    return std::to_string(http_result.content_length_);
+  }
+  if (field == "http_code") {
+    return std::to_string(http_result.http_status_);
+  }
+  if (field == "code_string" || field == "http_status") {
+    return code_string(http_result.http_status_);
+  }
+  if (field == "response_body" || field == "body" ||
+      field == "page_content" || field == "content") {
+    return http_result.response_body_;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string>
+record_check_value(std::string const &field, probe_result_t const &record) {
+  if (field == "type" || field == "record_type") {
+    return dns_record_type_to_str(record.type);
+  }
+  if (field == "info" || field == "rdata") {
+    return record.rdata;
+  }
+  if (field == "ttl") {
+    return std::to_string(record.ttl);
+  }
+  return std::nullopt;
+}
+
+std::string alert_value(std::string value) {
+  for (auto &ch : value) {
+    if (ch == '\n' || ch == '\r' || ch == '\t') {
+      ch = ' ';
+    }
+  }
+  constexpr std::size_t max_alert_value_length = 240;
+  if (value.size() > max_alert_value_length) {
+    value = value.substr(0, max_alert_value_length) + "...";
+  }
+  return value;
+}
+
+void report_regex_match(regex_check_t const &check,
+                        std::string const &domain_name,
+                        std::string const &value) {
+  spdlog::warn("[REGEX][{}][{}] {} (value: `{}`)", check.field, domain_name,
+               check.alert, alert_value(value));
+}
+
+void report_regex_match(regex_check_t const &check,
+                        std::string const &domain_name,
+                        probe_result_t const &record,
+                        std::string const &value) {
+  spdlog::warn("[REGEX][{}][{}][{}] {} (value: `{}`)", check.field,
+               domain_name, dns_record_type_to_str(record.type), check.alert,
+               alert_value(value));
+}
+
+void run_regex_checks(map_container_t<probe_result_t> const &result_map,
+                      std::vector<regex_check_t> const &checks) {
+  if (checks.empty()) {
+    return;
+  }
+
+  for (auto const &result_pair : result_map.cresult()) {
+    auto const &domain_name = result_pair.first;
+    auto const &domain_result = result_pair.second;
+    for (auto const &check : checks) {
+      if (is_domain_check_field(check.field)) {
+        auto const value =
+            domain_check_value(check.field, domain_name,
+                               domain_result.http_result_);
+        if (value && std::regex_search(*value, check.expression)) {
+          report_regex_match(check, domain_name, *value);
+        }
+        continue;
+      }
+
+      for (auto const &record : domain_result.dns_result_list_) {
+        auto const value = record_check_value(check.field, record);
+        if (value && std::regex_search(*value, check.expression)) {
+          report_regex_match(check, domain_name, record, *value);
+        }
+      }
+    }
+  }
+}
+
+std::optional<std::vector<regex_check_t>>
+load_regex_checks(std::string const &filename) {
+  if (filename.empty()) {
+    return std::vector<regex_check_t>{};
+  }
+
+  std::ifstream input_file(filename);
+  if (!input_file) {
+    spdlog::error("Unable to open regex checks file `{}`", filename);
+    return std::nullopt;
+  }
+
+  try {
+    json root{};
+    input_file >> root;
+    json const *checks_json = nullptr;
+    if (root.is_array()) {
+      checks_json = &root;
+    } else if (root.is_object() && root.contains("checks") &&
+               root["checks"].is_array()) {
+      checks_json = &root["checks"];
+    }
+
+    if (!checks_json) {
+      spdlog::error("Regex checks file must be an array or contain a `checks` "
+                    "array");
+      return std::nullopt;
+    }
+
+    std::vector<regex_check_t> checks{};
+    for (auto const &item : *checks_json) {
+      if (!item.is_object()) {
+        spdlog::error("Each regex check must be a JSON object");
+        return std::nullopt;
+      }
+
+      auto field = normalize_check_field(item.value("field", ""));
+      auto pattern = item.value("regex", item.value("pattern", ""));
+      auto alert = item.value("alert", "");
+      auto const ignore_case = item.value("ignore_case", false);
+
+      if (field.empty() || pattern.empty() || alert.empty()) {
+        spdlog::error("Each regex check requires `field`, `regex`, and "
+                      "`alert`");
+        return std::nullopt;
+      }
+      if (!is_supported_check_field(field)) {
+        spdlog::error("Unsupported regex check field `{}`", field);
+        return std::nullopt;
+      }
+
+      auto options = std::regex_constants::ECMAScript;
+      if (ignore_case) {
+        options |= std::regex_constants::icase;
+      }
+      checks.push_back({field, pattern, alert, ignore_case,
+                        std::regex(pattern, options)});
+    }
+    return checks;
+  } catch (std::regex_error const &e) {
+    spdlog::error("Invalid regex in checks file `{}`: {}", filename, e.what());
+  } catch (std::exception const &e) {
+    spdlog::error("Unable to parse regex checks file `{}`: {}", filename,
+                  e.what());
+  }
+  return std::nullopt;
+}
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -339,7 +532,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
   // if we deferred HTTP/S "probe", now is the time to get to it
   if (deferring) {
-    io_context.reset();
+    io_context.restart();
     thread_pool.emplace(thread_count);
     rt_args.names.emplace(std::move(*deferred_names_));
     for (std::size_t index = 0; index < thread_count; ++index) {
@@ -350,6 +543,8 @@ void start_name_checking(runtime_args_t &&rt_args) {
     }
     thread_pool->join();
   }
+  run_regex_checks(result_map, rt_args.regex_checks);
+
   if (!silent) {
     spdlog::info("Writing JSON output");
   }
@@ -380,6 +575,12 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
 void run_program(cli_args_t const &cli_args) {
   runtime_args_t rt_args{};
+  auto regex_checks = load_regex_checks(cli_args.regex_checks_filename);
+  if (!regex_checks) {
+    return;
+  }
+  rt_args.regex_checks = std::move(*regex_checks);
+
   // settle resolvers.
   std::vector<std::string> resolver_strings{};
   if (cli_args.resolver_filename.empty()) {

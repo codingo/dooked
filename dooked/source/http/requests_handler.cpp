@@ -1,5 +1,6 @@
 #include "http/requests_handler.hpp"
 #include "utils/random_utils.hpp"
+#include <boost/beast/core/bind_handler.hpp>
 #include <boost/beast/http/read.hpp>
 #include <boost/beast/http/write.hpp>
 #include <mutex>
@@ -9,6 +10,19 @@ extern bool no_bytes_count;
 extern bool silent;
 
 namespace dooked {
+
+template <typename FieldValue>
+std::string field_value_to_string(FieldValue const &value) {
+  return std::string(value.data(), value.size());
+}
+
+std::string response_body_for_checks(std::string const &body) {
+  constexpr std::size_t max_body_size = 64 * 1024;
+  if (body.size() > max_body_size) {
+    return body.substr(0, max_body_size);
+  }
+  return body;
+}
 
 http_request_handler_t::http_request_handler_t(net::io_context &io_context,
                                                std::string domain_name)
@@ -138,8 +152,10 @@ void http_request_handler_t::on_data_received(
 
   if (status_code_simple == 2) {
     response_int = response_type_e::ok;
+    response_string = response_body_for_checks(response_->body());
   } else if (status_code_simple == 3) { // redirected
-    response_string = (*response_)[http::field::location].to_string();
+    response_string =
+        field_value_to_string((*response_)[http::field::location]);
     if (response_string.empty()) {
       response_int = response_type_e::unknown_response;
     } else {
@@ -150,6 +166,7 @@ void http_request_handler_t::on_data_received(
       }
     }
   } else if (status_code_simple == 4) {
+    response_string = response_body_for_checks(response_->body());
     if (http_status_code == 404) {
       response_int = response_type_e::not_found;
     } else if (http_status_code == 400) {
@@ -158,6 +175,7 @@ void http_request_handler_t::on_data_received(
       response_int = response_type_e::forbidden;
     }
   } else if (status_code_simple == 5) {
+    response_string = response_body_for_checks(response_->body());
     response_int = response_type_e::server_error;
   } else {
 #ifdef _DEBUG
@@ -171,7 +189,8 @@ void http_request_handler_t::on_data_received(
   int content_length{};
   if (response_->has_content_length()) {
     try {
-      auto const cl_str = (*response_)[http::field::content_length].to_string();
+      auto const cl_str =
+          field_value_to_string((*response_)[http::field::content_length]);
       content_length = std::stoi(cl_str);
     } catch (std::exception const &) {
     }
@@ -364,8 +383,10 @@ void https_request_handler_t::on_data_received(
 
   if (status_code_simple == 2) {
     response_int = response_type_e::ok;
+    response_string = response_body_for_checks(response_->body());
   } else if (status_code_simple == 3) { // redirected
-    response_string = (*response_)[http::field::location].to_string();
+    response_string =
+        field_value_to_string((*response_)[http::field::location]);
     if (response_string.empty()) {
       response_int = response_type_e::unknown_response;
     } else {
@@ -376,6 +397,7 @@ void https_request_handler_t::on_data_received(
       }
     }
   } else if (status_code_simple == 4) {
+    response_string = response_body_for_checks(response_->body());
     if (status_code == 404) {
       response_int = response_type_e::not_found;
     } else if (status_code == 400) {
@@ -384,6 +406,7 @@ void https_request_handler_t::on_data_received(
       response_int = response_type_e::forbidden;
     }
   } else if (status_code_simple == 5) {
+    response_string = response_body_for_checks(response_->body());
     response_int = response_type_e::server_error;
   } else {
     response_int = response_type_e::unknown_response;
@@ -392,7 +415,8 @@ void https_request_handler_t::on_data_received(
   int content_length = 0;
   if (response_->has_content_length()) {
     try {
-      auto const cl_str = (*response_)[http::field::content_length].to_string();
+      auto const cl_str =
+          field_value_to_string((*response_)[http::field::content_length]);
       content_length = std::stoi(cl_str);
     } catch (std::exception const &) {
     }

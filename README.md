@@ -39,3 +39,18 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Record history fields
+
+JSON output includes `first-seen`, `last-seen`, and `seen` fields for each
+record. When a previous JSON output is passed back into `dooked`, records that
+are not present in the latest run are preserved with their last observed
+timestamp so rotating responses can be tracked over time.
+
+Useful reporting options:
+
+```
+--fs                 show records seen for the first time
+--ls 2               show records not seen for at least 2 days
+--lsd 05/01/2026    show records not seen since a US date
+```

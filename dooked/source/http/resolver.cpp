@@ -101,7 +101,7 @@ void http_resolver_t::tcp_request_result(response_type_e const rt,
     return send_next_request();
   }
   case response_type_e::ok: {
-    result_map_.insert(name_, content_length, 200);
+    result_map_.insert(name_, content_length, 200, response_string);
     return send_next_request();
   }
   case response_type_e::recv_timed_out: { // retry, wait timeout

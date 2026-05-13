@@ -19,6 +19,7 @@ struct cli_args_t {
   std::string resolver_filename{};
   std::string output_filename{};
   std::string input_filename{};
+  std::string notification_config_filename{};
 
   int file_type{};
   int post_http_request{};
@@ -33,6 +34,7 @@ struct runtime_args_t {
   std::optional<std::vector<json_data_t>> previous_data{};
   std::unique_ptr<std::ofstream> output_file{};
   std::string output_filename{};
+  std::string notification_config_filename{};
   http_process_e http_request_time_{};
   int thread_count{};
   int content_length{-1};

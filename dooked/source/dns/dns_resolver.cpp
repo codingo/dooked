@@ -451,7 +451,7 @@ void custom_resolver_socket_t::http_result_obtained(
     return dns_continue_probe();
   }
   case response_type_e::ok: {
-    result_map_.insert(name_, content_length, 200);
+    result_map_.insert(name_, content_length, 200, response_string);
     return dns_continue_probe();
   }
   case response_type_e::recv_timed_out: { // retry, wait timeout

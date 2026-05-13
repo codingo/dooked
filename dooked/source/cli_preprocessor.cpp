@@ -6,6 +6,8 @@
 #include "utils/string_utils.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <fstream>
+#include <regex>
 #include <set>
 #include <spdlog/spdlog.h>
 
@@ -17,6 +19,194 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+
+struct regex_notification_t {
+  std::string field{};
+  std::string pattern{};
+  std::string alert{};
+  std::regex compiled_pattern{};
+};
+
+std::string json_string_value(json const &object,
+                              std::initializer_list<char const *> keys) {
+  if (!object.is_object()) {
+    return {};
+  }
+  for (auto const *key : keys) {
+    auto const iter = object.find(key);
+    if (iter != object.cend() && iter->is_string()) {
+      return iter->get<std::string>();
+    }
+  }
+  return {};
+}
+
+std::string normalize_field_name(std::string field) {
+  std::transform(field.begin(), field.end(), field.begin(),
+                 [](unsigned char c) { return (char)std::tolower(c); });
+  return field;
+}
+
+bool json_bool_value(json const &object, char const *key,
+                     bool const default_value) {
+  if (!object.is_object()) {
+    return default_value;
+  }
+  auto const iter = object.find(key);
+  if (iter != object.cend() && iter->is_boolean()) {
+    return iter->get<bool>();
+  }
+  return default_value;
+}
+
+std::vector<regex_notification_t>
+read_regex_notifications(std::string const &filename) {
+  std::vector<regex_notification_t> notifications{};
+  if (filename.empty()) {
+    return notifications;
+  }
+
+  std::ifstream input_file{filename};
+  if (!input_file) {
+    spdlog::error("Unable to open notification config: {}", filename);
+    return notifications;
+  }
+
+  json config{};
+  try {
+    input_file >> config;
+  } catch (std::exception const &e) {
+    spdlog::error("Unable to parse notification config `{}`: {}", filename,
+                  e.what());
+    return notifications;
+  }
+
+  json const *checks = &config;
+  if (config.is_object()) {
+    auto const iter = config.find("checks");
+    if (iter != config.cend()) {
+      checks = &(*iter);
+    }
+  }
+  if (!checks->is_array()) {
+    spdlog::error("Notification config `{}` must be an array or contain a "
+                  "`checks` array",
+                  filename);
+    return notifications;
+  }
+
+  for (auto const &item : *checks) {
+    auto field = normalize_field_name(json_string_value(item, {"field"}));
+    auto pattern = json_string_value(item, {"regex", "pattern"});
+    auto alert = json_string_value(item, {"alert", "message"});
+    if (field.empty() || pattern.empty() || alert.empty()) {
+      spdlog::warn("Skipping notification check with missing field, regex, or "
+                   "alert");
+      continue;
+    }
+    auto flags = std::regex::ECMAScript;
+    if (!json_bool_value(item, "case_sensitive", true)) {
+      flags |= std::regex::icase;
+    }
+    try {
+      notifications.push_back(
+          {field, pattern, alert, std::regex(pattern, flags)});
+    } catch (std::regex_error const &e) {
+      spdlog::warn("Skipping invalid regex `{}`: {}", pattern, e.what());
+    }
+  }
+  return notifications;
+}
+
+bool is_dns_notification_field(std::string const &field) {
+  return field == "type" || field == "info" || field == "rdata" ||
+         field == "ttl";
+}
+
+std::optional<std::string>
+notification_field_value(std::string const &field,
+                         std::string const &domain_name,
+                         probe_result_t const *dns_result,
+                         http_response_t const &http_result) {
+  if (field == "domain" || field == "domain_name") {
+    return domain_name;
+  }
+  if (field == "http_code") {
+    return std::to_string(http_result.http_status_);
+  }
+  if (field == "code_string") {
+    return code_string(http_result.http_status_);
+  }
+  if (field == "content_length") {
+    return std::to_string(http_result.content_length_);
+  }
+  if (field == "body" || field == "content" || field == "page_content") {
+    return http_result.body_;
+  }
+  if (!dns_result) {
+    return std::nullopt;
+  }
+  if (field == "type") {
+    return dns_record_type_to_str(dns_result->type);
+  }
+  if (field == "info" || field == "rdata") {
+    return dns_result->rdata;
+  }
+  if (field == "ttl") {
+    return std::to_string(dns_result->ttl);
+  }
+  return std::nullopt;
+}
+
+std::string alert_preview(std::string value) {
+  constexpr std::size_t max_preview_length = 120;
+  if (value.size() <= max_preview_length) {
+    return value;
+  }
+  value.resize(max_preview_length);
+  return value + "...";
+}
+
+void run_notification_check(regex_notification_t const &notification,
+                            std::string const &domain_name,
+                            probe_result_t const *dns_result,
+                            http_response_t const &http_result) {
+  auto const value = notification_field_value(
+      notification.field, domain_name, dns_result, http_result);
+  if (!value || value->empty()) {
+    return;
+  }
+  if (std::regex_search(*value, notification.compiled_pattern)) {
+    spdlog::warn("[CUSTOM][{}][{}] {} (matched: {})", domain_name,
+                 notification.field, notification.alert,
+                 alert_preview(*value));
+  }
+}
+
+void run_regex_notifications(
+    std::vector<regex_notification_t> const &notifications,
+    map_container_t<probe_result_t> const &result_map) {
+  if (notifications.empty() || result_map.empty()) {
+    return;
+  }
+  for (auto const &result_pair : result_map.cresult()) {
+    auto const &domain_name = result_pair.first;
+    auto const &http_result = result_pair.second.http_result_;
+    for (auto const &notification : notifications) {
+      if (!is_dns_notification_field(notification.field)) {
+        run_notification_check(notification, domain_name, nullptr, http_result);
+      }
+    }
+    for (auto const &dns_result : result_pair.second.dns_result_list_) {
+      for (auto const &notification : notifications) {
+        if (is_dns_notification_field(notification.field)) {
+          run_notification_check(notification, domain_name, &dns_result,
+                                 http_result);
+        }
+      }
+    }
+  }
+}
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -339,7 +529,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
   // if we deferred HTTP/S "probe", now is the time to get to it
   if (deferring) {
-    io_context.reset();
+    io_context.restart();
     thread_pool.emplace(thread_count);
     rt_args.names.emplace(std::move(*deferred_names_));
     for (std::size_t index = 0; index < thread_count; ++index) {
@@ -354,6 +544,9 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  run_regex_notifications(read_regex_notifications(
+                              rt_args.notification_config_filename),
+                          result_map);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -477,6 +670,7 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.notification_config_filename = cli_args.notification_config_filename;
   return start_name_checking(std::move(rt_args));
 }
 

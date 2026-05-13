@@ -1,36 +1,24 @@
 cmake_minimum_required(VERSION 3.0.0 FATAL_ERROR)
 
+set(PROJECT_NAME dooked)
+set(CMAKE_BUILD_TYPE Release)
+project(${PROJECT_NAME} CXX)
+
 # Project
 get_filename_component(PROJECT_DIR "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 
-#### find: Boost Lib
-set(Boost_USE_STATIC_LIBS OFF) 
-set(Boost_USE_MULTITHREADED ON)  
-set(Boost_USE_STATIC_RUNTIME OFF) 
-find_package(Boost 1.73.0 COMPONENTS)
+find_package(Boost 1.73.0 REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(Threads REQUIRED)
 
-if(Boost_FOUND)
-    include_directories(${Boost_INCLUDE_DIRS}) 
-endif()
-
-###########################
-
-set(PROJECT_NAME dooked)
-set(CMAKE_BUILD_TYPE Release)
 include_directories(${PROJECT_DIR}/include)
 include_directories(${PROJECT_DIR}/CLI11/include)
 include_directories(${PROJECT_DIR}/json/single_include)
 include_directories(${PROJECT_DIR}/spdlog/include)
 
-
-link_directories(/usr/lib)
-link_libraries(pthread ssl crypto)
-
 # Outputs
 set(OUTPUT_DEBUG ${PROJECT_DIR}/bin)
 set(OUTPUT_RELEASE ${PROJECT_DIR}/bin)
-
-project(${PROJECT_NAME} CXX)
 
 # Define Release by default.
 if(NOT CMAKE_BUILD_TYPE)
@@ -43,13 +31,13 @@ endif(NOT CMAKE_BUILD_TYPE)
 ############################################################
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_DEBUG}")
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_DEBUG}")
-  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_DEBUG}")
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DEBUG}")
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DEBUG}")
+  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${OUTPUT_DEBUG}")
 else()
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_RELEASE}")
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_RELEASE}")
-  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_RELEASE}")
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_RELEASE}")
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_RELEASE}")
+  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${OUTPUT_RELEASE}")
 endif()
 
 # Messages
@@ -102,6 +90,13 @@ source_group("Headers" FILES ${HEADERS_FILES})
 add_executable(${PROJECT_NAME} 
    ${SRC_FILES} ${HEADERS_FILES}
 )
+
+target_include_directories(${PROJECT_NAME} PRIVATE ${Boost_INCLUDE_DIRS})
+target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+
+if(WIN32)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX _WIN32_WINNT=0x0601)
+endif()
 
 if(NOT MSVC)
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3")

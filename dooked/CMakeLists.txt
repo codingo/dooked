@@ -67,6 +67,7 @@ set(SRC_FILES
     ./source/dns/dns_resolver.cpp
     ./source/http/resolver.cpp
     ./source/http/requests_handler.cpp
+    ./source/checks/regex_checks.cpp
     ./source/utils/constants.cpp
     ./source/utils/io_utils.cpp
     ./source/utils/string_utils.cpp
@@ -84,6 +85,7 @@ set(HEADERS_FILES
     ./include/dns/dns_resolver.hpp
     ./include/http/resolver.hpp
     ./include/http/requests_handler.hpp
+    ./include/checks/regex_checks.hpp
     ./include/utils/constants.hpp
     ./include/utils/containers.hpp
     ./include/utils/dns_utils.hpp

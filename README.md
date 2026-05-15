@@ -39,3 +39,24 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### DNS record history
+
+When a previous JSON output is passed back through `--input-file`, dooked now
+keeps history fields on each DNS record:
+
+- `first-seen`: first scan time where the record was observed
+- `last-seen`: most recent scan time where the record was observed
+- `seen`: number of scans where the record has appeared
+
+Records that are missing from the latest scan are preserved in the next JSON
+output with their previous `last-seen` value. This makes load-balanced records
+easier to track when IP addresses rotate between runs.
+
+Useful reporting flags:
+
+```
+--fs               report records seen for the first time
+--ls 2             report records missing since at least 2 days ago
+--lsd 05/01/2026  report records missing since a US date
+```

@@ -10,8 +10,11 @@ bool case_insensitive_compare(std::string const &, std::string const &);
 
 struct probe_result_t {
   std::string rdata{};
+  std::string first_seen{};
+  std::string last_seen{};
   dns_record_type_e type{}; // RR TYPE (2 octets)
   std::uint32_t ttl{};      // time to live(4 octets)
+  int seen{};
 
   friend bool operator==(probe_result_t const &a, probe_result_t const &b) {
     return case_insensitive_compare(a.rdata, b.rdata) && (a.type == b.type);

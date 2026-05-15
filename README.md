@@ -39,3 +39,19 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Tracking first-seen / last-seen records
+
+JSON output now keeps `first-seen`, `last-seen`, and `seen` fields for every
+DNS record. When you pass a previous JSON output back into `dooked`, records
+that are not present in the latest scan are kept in the new JSON with their
+last observed timestamp, which makes rotating load-balanced responses easier to
+track over time.
+
+Useful comparison flags:
+
+```
+--fs                 show records that are seen for the first time
+--ls 2               show missing records last seen at least 2 days ago
+--lsd 05/01/2026    show missing records last seen on or before a US date
+```

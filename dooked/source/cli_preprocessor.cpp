@@ -210,12 +210,12 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
   // something is missing
   if (current_total_elem < previous_total_elem) {
     for (auto start_iter = iter; start_iter != last_elem_iter; ++start_iter) {
-      bool const found = std::binary_search(
-          current_domain_info_list.cbegin(), current_domain_info_list.cend(),
-          *start_iter, [](auto const &a, auto const &b) {
-            return a.type == b.type &&
-                   case_insensitive_compare(a.rdata, b.rdata);
-      });
+      bool const found =
+          std::find_if(current_domain_info_list.cbegin(),
+                       current_domain_info_list.cend(),
+                       [&previous = *start_iter](auto const &current) {
+                         return same_dns_record(previous, current);
+                       }) != current_domain_info_list.cend();
       if (!found) {
         if (should_report_last_seen(*start_iter, rt_args)) {
           spdlog::warn("[LAST-SEEN][{}][{}] `{}` last seen `{}`",
@@ -297,11 +297,11 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
   } else {
     // new information has been added
     for (auto const &current_elem : current_domain_info_list) {
-      bool const found = std::binary_search(
-          iter, last_elem_iter, current_elem, [](auto const &a, auto const &b) {
-            return a.type == b.type &&
-                   case_insensitive_compare(a.rdata, b.rdata);
-      });
+      bool const found =
+          std::find_if(iter, last_elem_iter,
+                       [&current_elem](auto const &previous) {
+                         return same_dns_record(current_elem, previous);
+                       }) != last_elem_iter;
       if (!found) {
         if (rt_args.report_first_seen) {
           spdlog::info("[FIRST-SEEN][{}][{}] `{}`", iter->domain_name,

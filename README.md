@@ -39,3 +39,32 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Runtime regex checks
+
+Use `--checks` or `--check-config` to load custom notification checks from a
+JSON file. A config may be a JSON array or an object with a `checks` array:
+
+```json
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "(dev|test)",
+      "alert": "domain contains an environment marker",
+      "ignore_case": true
+    },
+    {
+      "field": "body",
+      "regex": "Copyright 2020",
+      "alert": "outdated copyright banner"
+    }
+  ]
+}
+```
+
+Supported fields are `domain`, DNS fields (`type`, `info`/`rdata`, `ttl`),
+HTTP fields (`http_code`, `code_string`, `content_length`), and response body
+aliases (`body`, `response_body`, `page_content`, `content`). Response bodies
+are kept only in memory for matching, capped at 64 KiB per request, and are not
+written to the JSON output file.

@@ -354,6 +354,9 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  if (rt_args.regex_checks) {
+    run_regex_checks(result_map, *rt_args.regex_checks);
+  }
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -380,6 +383,16 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
 void run_program(cli_args_t const &cli_args) {
   runtime_args_t rt_args{};
+
+  if (!cli_args.check_config_filename.empty()) {
+    std::string check_error;
+    auto checks = load_regex_checks(cli_args.check_config_filename, check_error);
+    if (!checks) {
+      return spdlog::error(check_error);
+    }
+    rt_args.regex_checks.emplace(std::move(*checks));
+  }
+
   // settle resolvers.
   std::vector<std::string> resolver_strings{};
   if (cli_args.resolver_filename.empty()) {

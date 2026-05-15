@@ -26,6 +26,9 @@ void trim(std::string &);
 struct json_data_t {
   std::string domain_name{};
   std::string rdata{};
+  std::string first_seen{};
+  std::string last_seen{};
+  int seen{};
   int ttl{};
   int http_code{};
   int content_length{};
@@ -40,6 +43,18 @@ struct json_data_t {
         dns_str_to_record_type(json_object["type"].get<json::string_t>());
     data.rdata = json_object["info"].get<json::string_t>();
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
+    if (auto const iter = json_object.find("first-seen");
+        iter != json_object.end() && iter->second.is_string()) {
+      data.first_seen = iter->second.get<json::string_t>();
+    }
+    if (auto const iter = json_object.find("last-seen");
+        iter != json_object.end() && iter->second.is_string()) {
+      data.last_seen = iter->second.get<json::string_t>();
+    }
+    if (auto const iter = json_object.find("seen");
+        iter != json_object.end() && iter->second.is_number_integer()) {
+      data.seen = iter->second.get<json::number_integer_t>();
+    }
     data.content_length = len;
     data.http_code = http_code;
     return data;

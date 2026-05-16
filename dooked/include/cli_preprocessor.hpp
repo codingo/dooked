@@ -2,6 +2,7 @@
 
 #include "dns/dns_resolver.hpp"
 #include "utils/io_utils.hpp"
+#include <regex>
 #include <thread>
 
 // maximum sockets to open regardless of the number of threads
@@ -19,12 +20,23 @@ struct cli_args_t {
   std::string resolver_filename{};
   std::string output_filename{};
   std::string input_filename{};
+  std::string last_seen_date{};
+  std::string check_config_filename{};
 
   int file_type{};
   int post_http_request{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
   bool include_date{false};
+  bool show_first_seen{false};
+};
+
+struct regex_check_t {
+  std::string field{};
+  std::regex pattern{};
+  std::string pattern_text{};
+  std::string alert{};
 };
 
 struct runtime_args_t {
@@ -33,9 +45,14 @@ struct runtime_args_t {
   std::optional<std::vector<json_data_t>> previous_data{};
   std::unique_ptr<std::ofstream> output_file{};
   std::string output_filename{};
+  std::string run_timestamp{};
+  std::string last_seen_date{};
+  std::vector<regex_check_t> regex_checks{};
   http_process_e http_request_time_{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
+  bool show_first_seen{false};
 };
 
 void run_program(cli_args_t const &cli_args);

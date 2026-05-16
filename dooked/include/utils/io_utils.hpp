@@ -5,8 +5,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <sstream>
 
 namespace dooked {
@@ -26,14 +28,26 @@ void trim(std::string &);
 struct json_data_t {
   std::string domain_name{};
   std::string rdata{};
+  std::string first_seen{};
+  std::string last_seen{};
   int ttl{};
   int http_code{};
   int content_length{};
+  int seen{1};
   dns_record_type_e type{};
 
   static json_data_t serialize(std::string const &d, int const len,
                                int const http_code,
                                json::object_t &json_object) {
+    auto const get_string = [&](char const *primary, char const *fallback) {
+      if (auto iter = json_object.find(primary); iter != json_object.end()) {
+        return iter->second.get<json::string_t>();
+      }
+      if (auto iter = json_object.find(fallback); iter != json_object.end()) {
+        return iter->second.get<json::string_t>();
+      }
+      return std::string{};
+    };
     json_data_t data{};
     data.domain_name = d;
     data.type =
@@ -42,6 +56,11 @@ struct json_data_t {
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
     data.content_length = len;
     data.http_code = http_code;
+    data.first_seen = get_string("first-seen", "first_seen");
+    data.last_seen = get_string("last-seen", "last_seen");
+    if (auto iter = json_object.find("seen"); iter != json_object.end()) {
+      data.seen = iter->second.get<json::number_integer_t>();
+    }
     return data;
   }
 };
@@ -53,6 +72,25 @@ struct jd_domain_comparator_t {
 };
 
 namespace detail {
+
+inline std::string record_key(std::string const &domain,
+                              dns_record_type_e const type,
+                              std::string const &rdata) {
+  return domain + "\n" + dns_record_type_to_str(type) + "\n" + rdata;
+}
+
+inline std::map<std::string, json_data_t>
+previous_record_map(std::optional<std::vector<json_data_t>> const &previous) {
+  std::map<std::string, json_data_t> records{};
+  if (!previous) {
+    return records;
+  }
+  for (auto const &record : *previous) {
+    records[record_key(record.domain_name, record.type, record.rdata)] =
+        record;
+  }
+  return records;
+}
 
 template <typename DnsType, typename RtType>
 void write_json_result_impl(map_container_t<DnsType> const &result_map,
@@ -67,10 +105,47 @@ void write_json_result_impl(map_container_t<DnsType> const &result_map,
   }
 
   json::array_t list;
+  auto const previous_records = previous_record_map(rt_args.previous_data);
+  auto const now = rt_args.run_timestamp;
   for (auto const &result_pair : result_map.cresult()) {
     json::object_t internal_object;
     auto &http_result = result_pair.second.http_result_;
-    internal_object["dns_probe"] = result_pair.second.dns_result_list_;
+    json::array_t dns_probe{};
+    std::set<std::string> written_record_keys{};
+    for (auto const &record : result_pair.second.dns_result_list_) {
+      auto const key = record_key(result_pair.first, record.type, record.rdata);
+      written_record_keys.insert(key);
+      json::object_t record_json{};
+      record_json["ttl"] = record.ttl;
+      record_json["type"] = dns_record_type_to_str(record.type);
+      record_json["info"] = record.rdata;
+
+      auto const previous_iter = previous_records.find(key);
+      if (previous_iter == previous_records.end()) {
+        record_json["first-seen"] = now;
+        record_json["seen"] = 1;
+      } else {
+        auto const &previous = previous_iter->second;
+        record_json["first-seen"] =
+            previous.first_seen.empty() ? now : previous.first_seen;
+        record_json["seen"] = previous.seen + 1;
+      }
+      record_json["last-seen"] = now;
+      dns_probe.push_back(std::move(record_json));
+    }
+    for (auto const &[key, previous] : previous_records) {
+      if (previous.domain_name != result_pair.first ||
+          written_record_keys.count(key) != 0) {
+        continue;
+      }
+      dns_probe.push_back({{"ttl", previous.ttl},
+                           {"type", dns_record_type_to_str(previous.type)},
+                           {"info", previous.rdata},
+                           {"first-seen", previous.first_seen},
+                           {"last-seen", previous.last_seen},
+                           {"seen", previous.seen}});
+    }
+    internal_object["dns_probe"] = std::move(dns_probe);
     internal_object["content_length"] = http_result.content_length_;
     internal_object["http_code"] = http_result.http_status_;
     internal_object["code_string"] = code_string(http_result.http_status_);

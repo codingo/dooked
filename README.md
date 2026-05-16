@@ -39,3 +39,66 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### History tracking
+
+When a previous JSON output file is passed back as input, dooked now carries
+record history forward into the next JSON output:
+
+- `first-seen`: when this DNS record first appeared in dooked output
+- `last-seen`: when this DNS record was last observed
+- `seen`: how many runs have observed the same domain/type/value tuple
+
+The history metadata makes load-balanced records less noisy because an IP can
+rotate out of a single run without losing when it was first and last observed.
+Records from previous JSON input are preserved in the next output when they are
+not observed in the current run, with their previous `last_seen` value intact.
+
+Additional reporting flags:
+
+```sh
+dooked -i previous.json --fs
+dooked -i previous.json --ls 2
+dooked -i previous.json --lsd 05/16/2026
+```
+
+- `--fs` reports DNS records that are first seen in the current run.
+- `--ls <days>` reports records from the previous JSON that are missing from
+  the current run and were last seen at least `<days>` days ago.
+- `--lsd <MM/DD/YYYY>` reports missing records last seen on or before the
+  supplied US-formatted date.
+
+### Runtime regex checks
+
+Use `--checks <file.json>` to load custom regex alerts at runtime. The config
+can be either an array or an object with a `checks` array:
+
+```json
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "(dev|test)",
+      "alert": "development-looking domain",
+      "ignore_case": true
+    },
+    {
+      "field": "page_content",
+      "regex": "Copyright 2024",
+      "alert": "outdated copyright banner"
+    },
+    {
+      "field": "content_length",
+      "regex": "^[1-9][0-9]{5,}$",
+      "alert": "large response body"
+    }
+  ]
+}
+```
+
+Supported fields are `domain`, `domain_name`, `type`, `rdata`, `info`, `ttl`,
+`http_code`, `code_string`, `content_length`, `body`, `page_content`,
+`response_body`, `first-seen`, `first_seen`, `last-seen`, `last_seen`, and
+`seen`. Use `"field": "*"` to run a regex against every supported field.
+Response bodies are capped in memory for runtime checks and are not written
+into JSON output.

@@ -6,7 +6,12 @@
 #include "utils/string_utils.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <map>
 #include <set>
+#include <sstream>
 #include <spdlog/spdlog.h>
 
 // defined (and assigned to) in main.cpp
@@ -17,6 +22,221 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+
+std::string current_timestamp() {
+  std::string timestamp{};
+  if (!timet_to_string(timestamp, std::time(nullptr), "%Y-%m-%d %H:%M:%S")) {
+    return {};
+  }
+  return timestamp;
+}
+
+std::optional<std::time_t> parse_timestamp(std::string const &value) {
+  if (value.empty()) {
+    return std::nullopt;
+  }
+
+  for (auto const *format : {"%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S",
+                             "%m/%d/%Y"}) {
+    std::tm parsed{};
+    std::istringstream stream{value};
+    stream >> std::get_time(&parsed, format);
+    if (!stream.fail()) {
+      parsed.tm_isdst = -1;
+      return std::mktime(&parsed);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<std::time_t> last_seen_cutoff(runtime_args_t const &rt_args) {
+  if (!rt_args.last_seen_date.empty()) {
+    return parse_timestamp(rt_args.last_seen_date);
+  }
+  if (rt_args.last_seen_days >= 0) {
+    auto const now = std::chrono::system_clock::now();
+    auto const cutoff =
+        now - std::chrono::hours(24 * rt_args.last_seen_days);
+    return std::chrono::system_clock::to_time_t(cutoff);
+  }
+  return std::nullopt;
+}
+
+bool is_not_seen_since(json_data_t const &record, std::time_t const cutoff) {
+  auto const parsed = parse_timestamp(record.last_seen);
+  return !parsed || *parsed <= cutoff;
+}
+
+std::map<std::string, std::string>
+record_fields(std::string const &domain, probe_result_t const &record,
+              http_response_t const &http_result,
+              json_data_t const *previous_record,
+              std::string const &run_timestamp) {
+  auto const first_seen =
+      previous_record && !previous_record->first_seen.empty()
+          ? previous_record->first_seen
+          : run_timestamp;
+  auto const seen = previous_record ? previous_record->seen + 1 : 1;
+
+  return {{"domain", domain},
+          {"domain_name", domain},
+          {"type", dns_record_type_to_str(record.type)},
+          {"rdata", record.rdata},
+          {"info", record.rdata},
+          {"ttl", std::to_string(record.ttl)},
+          {"http_code", std::to_string(http_result.http_status_)},
+          {"code_string", code_string(http_result.http_status_)},
+          {"content_length", std::to_string(http_result.content_length_)},
+          {"body", http_result.response_body_},
+          {"page_content", http_result.response_body_},
+          {"response_body", http_result.response_body_},
+          {"first-seen", first_seen},
+          {"first_seen", first_seen},
+          {"last-seen", run_timestamp},
+          {"last_seen", run_timestamp},
+          {"seen", std::to_string(seen)}};
+}
+
+void report_first_last_seen(runtime_args_t const &rt_args,
+                            map_container_t<probe_result_t> const &result_map) {
+  if (!rt_args.previous_data ||
+      (!rt_args.show_first_seen && rt_args.last_seen_days < 0 &&
+       rt_args.last_seen_date.empty())) {
+    return;
+  }
+
+  auto const previous_records =
+      detail::previous_record_map(rt_args.previous_data);
+  std::set<std::string> current_records{};
+  for (auto const &result_pair : result_map.cresult()) {
+    for (auto const &record : result_pair.second.dns_result_list_) {
+      auto const key =
+          detail::record_key(result_pair.first, record.type, record.rdata);
+      current_records.insert(key);
+      if (rt_args.show_first_seen && previous_records.count(key) == 0) {
+        spdlog::info("[FIRST-SEEN][{}][{}] `{}`", result_pair.first,
+                     dns_record_type_to_str(record.type), record.rdata);
+      }
+    }
+  }
+
+  auto const cutoff = last_seen_cutoff(rt_args);
+  if (!cutoff) {
+    return;
+  }
+  for (auto const &[key, previous] : previous_records) {
+    if (current_records.count(key) == 0 &&
+        is_not_seen_since(previous, *cutoff)) {
+      spdlog::warn("[LAST-SEEN][{}][{}] `{}` last seen `{}`",
+                   previous.domain_name, dns_record_type_to_str(previous.type),
+                   previous.rdata,
+                   previous.last_seen.empty() ? "unknown" : previous.last_seen);
+    }
+  }
+}
+
+std::vector<regex_check_t>
+load_regex_checks(std::string const &check_config_filename) {
+  if (check_config_filename.empty()) {
+    return {};
+  }
+
+  std::ifstream input_file(check_config_filename);
+  if (!input_file) {
+    spdlog::error("unable to open regex check config `{}`",
+                  check_config_filename);
+    return {};
+  }
+
+  json content{};
+  try {
+    input_file >> content;
+  } catch (std::exception const &e) {
+    spdlog::error("unable to parse regex check config `{}`: {}",
+                  check_config_filename, e.what());
+    return {};
+  }
+
+  json checks{};
+  if (content.is_array()) {
+    checks = content;
+  } else if (content.contains("checks") && content["checks"].is_array()) {
+    checks = content["checks"];
+  } else {
+    spdlog::error(
+        "regex check config must be an array or contain a `checks` array");
+    return {};
+  }
+  std::vector<regex_check_t> result{};
+  for (auto const &check : checks) {
+    auto const field = check.value("field", "");
+    auto const pattern_text = check.value("regex", "");
+    auto const alert = check.value("alert", "regex check matched");
+    auto const ignore_case = check.value("ignore_case", false);
+    if (field.empty() || pattern_text.empty()) {
+      spdlog::warn("skipping regex check with missing field or regex");
+      continue;
+    }
+
+    try {
+      auto flags = std::regex::ECMAScript;
+      if (ignore_case) {
+        flags |= std::regex::icase;
+      }
+      result.push_back(
+          {field, std::regex(pattern_text, flags), pattern_text, alert});
+    } catch (std::regex_error const &e) {
+      spdlog::warn("skipping invalid regex `{}`: {}", pattern_text, e.what());
+    }
+  }
+  return result;
+}
+
+void report_regex_checks(runtime_args_t const &rt_args,
+                         map_container_t<probe_result_t> const &result_map) {
+  if (rt_args.regex_checks.empty()) {
+    return;
+  }
+
+  auto const previous_records =
+      detail::previous_record_map(rt_args.previous_data);
+  for (auto const &result_pair : result_map.cresult()) {
+    auto const &http_result = result_pair.second.http_result_;
+    for (auto const &record : result_pair.second.dns_result_list_) {
+      auto const previous_iter = previous_records.find(
+          detail::record_key(result_pair.first, record.type, record.rdata));
+      auto const previous_record = previous_iter == previous_records.end()
+                                       ? nullptr
+                                       : &previous_iter->second;
+      auto const fields =
+          record_fields(result_pair.first, record, http_result, previous_record,
+                        rt_args.run_timestamp);
+      for (auto const &check : rt_args.regex_checks) {
+        if (check.field == "*") {
+          for (auto const &[field, value] : fields) {
+            if (std::regex_search(value, check.pattern)) {
+              spdlog::warn("[ALERT][{}][{}][{}] {}: `{}`", field,
+                           result_pair.first,
+                           dns_record_type_to_str(record.type), check.alert,
+                           value);
+            }
+          }
+          continue;
+        }
+
+        auto const field_iter = fields.find(check.field);
+        if (field_iter == fields.end()) {
+          continue;
+        }
+        if (std::regex_search(field_iter->second, check.pattern)) {
+          spdlog::warn("[ALERT][{}][{}][{}] {}: `{}`", check.field,
+                       result_pair.first, dns_record_type_to_str(record.type),
+                       check.alert, field_iter->second);
+        }
+      }
+    }
+  }
+}
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -354,6 +574,8 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  report_regex_checks(rt_args, result_map);
+  report_first_last_seen(rt_args, result_map);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -477,6 +699,11 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.run_timestamp = current_timestamp();
+  rt_args.last_seen_days = cli_args.last_seen_days;
+  rt_args.last_seen_date = cli_args.last_seen_date;
+  rt_args.show_first_seen = cli_args.show_first_seen;
+  rt_args.regex_checks = load_regex_checks(cli_args.check_config_filename);
   return start_name_checking(std::move(rt_args));
 }
 

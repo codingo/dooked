@@ -4,11 +4,23 @@
 
 namespace dooked {
 
+namespace {
+void run_final_body_checks(regex_check_list_t const *checks,
+                           std::string const &name, int const http_code,
+                           int const content_length,
+                           std::string const &body) {
+  if (checks != nullptr) {
+    run_body_checks(*checks, name, http_code, content_length, body);
+  }
+}
+} // namespace
+
 http_resolver_t::http_resolver_t(net::io_context &ioc, ssl::context *sslc,
                                  domain_list_t &names,
-                                 map_container_t<probe_result_t> &result_map)
+                                 map_container_t<probe_result_t> &result_map,
+                                 regex_check_list_t const *regex_checks)
     : io_context_(ioc), default_tls_context_(sslc), names_(names),
-      result_map_(result_map) {}
+      result_map_(result_map), regex_checks_{regex_checks} {}
 
 void http_resolver_t::send_next_request() {
   try {
@@ -33,8 +45,9 @@ void http_resolver_t::send_http_request(std::string const &address) {
       http_request_handler_->request_.emplace<http_request_handler_t>(
           io_context_, uri_t{address}.host());
   http_request.start([this](response_type_e const rt, int const content_length,
-                            std::string const &response) {
-    tcp_request_result(rt, content_length, response);
+                            std::string const &response,
+                            std::string const &body) {
+    tcp_request_result(rt, content_length, response, body);
   });
 }
 
@@ -43,8 +56,9 @@ void http_resolver_t::send_https_request(std::string const &address) {
       http_request_handler_->request_.emplace<https_request_handler_t>(
           io_context_, *default_tls_context_, uri_t{address}.host());
   return https_request.start(
-      [this](auto const rt, auto const len, auto const &rstr) {
-        tcp_request_result(rt, len, rstr);
+      [this](auto const rt, auto const len, auto const &rstr,
+             auto const &body) {
+        tcp_request_result(rt, len, rstr, body);
       });
 }
 
@@ -62,13 +76,16 @@ void http_resolver_t::on_resolve_error() {
 
 void http_resolver_t::tcp_request_result(response_type_e const rt,
                                          int const content_length,
-                                         std::string const &response_string) {
+                                         std::string const &response_string,
+                                         std::string const &body) {
   switch (rt) {
   case response_type_e::bad_request: {
+    run_final_body_checks(regex_checks_, name_, 400, content_length, body);
     result_map_.insert(name_, content_length, 400);
     return send_next_request();
   }
   case response_type_e::forbidden: {
+    run_final_body_checks(regex_checks_, name_, 403, content_length, body);
     result_map_.insert(name_, content_length, 403);
     return send_next_request();
   }
@@ -97,10 +114,12 @@ void http_resolver_t::tcp_request_result(response_type_e const rt,
     return send_https_request(response_string);
   }
   case response_type_e::not_found: { // HTTP(S) 404
+    run_final_body_checks(regex_checks_, name_, 404, content_length, body);
     result_map_.insert(name_, content_length, 404);
     return send_next_request();
   }
   case response_type_e::ok: {
+    run_final_body_checks(regex_checks_, name_, 200, content_length, body);
     result_map_.insert(name_, content_length, 200);
     return send_next_request();
   }
@@ -122,6 +141,7 @@ void http_resolver_t::tcp_request_result(response_type_e const rt,
     return switch_ssl_method(response_string);
   }
   case response_type_e::server_error: {
+    run_final_body_checks(regex_checks_, name_, 503, content_length, body);
     result_map_.insert(name_, content_length, 503);
     return send_next_request();
   }

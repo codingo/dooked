@@ -9,6 +9,17 @@ extern bool silent;
 
 namespace dooked {
 
+namespace {
+void run_final_body_checks(regex_check_list_t const *checks,
+                           std::string const &name, int const http_code,
+                           int const content_length,
+                           std::string const &body) {
+  if (checks != nullptr) {
+    run_body_checks(*checks, name, http_code, content_length, body);
+  }
+}
+} // namespace
+
 dns_rec_list_t const dns_supported_record_type_t::supported_types{
     dns_record_type_e::DNS_REC_A,     dns_record_type_e::DNS_REC_AAAA,
     dns_record_type_e::DNS_REC_CNAME, dns_record_type_e::DNS_REC_MX,
@@ -111,9 +122,11 @@ void dns_create_query(std::string const &name, std::uint16_t record_type,
 custom_resolver_socket_t::custom_resolver_socket_t(
     net::io_context &io_context, net::ssl::context *ssl_context,
     domain_list_t &domain_list, resolver_list_t &resolvers,
-    map_container_t<probe_result_t> &result_map)
+    map_container_t<probe_result_t> &result_map,
+    regex_check_list_t const *regex_checks)
     : io_{io_context}, names_{domain_list}, resolvers_{resolvers},
-      result_map_{result_map}, ssl_context_{ssl_context},
+      result_map_{result_map}, regex_checks_{regex_checks},
+      ssl_context_{ssl_context},
       supported_dns_record_size_(
           dns_supported_record_type_t::supported_types.size()) {}
 
@@ -382,8 +395,9 @@ void custom_resolver_socket_t::send_http_request(std::string const &address) {
       http_request_handler_->request_.emplace<http_request_handler_t>(
           io_, uri_t{address}.host());
   http_request.start([this](response_type_e const rt, int const content_length,
-                            std::string const &response) {
-    http_result_obtained(rt, content_length, response);
+                            std::string const &response,
+                            std::string const &body) {
+    http_result_obtained(rt, content_length, response, body);
   });
 }
 
@@ -392,8 +406,9 @@ void custom_resolver_socket_t::send_https_request(std::string const &address) {
       http_request_handler_->request_.emplace<https_request_handler_t>(
           io_, *ssl_context_, uri_t{address}.host());
   return https_request.start(
-      [this](auto const rt, auto const len, auto const &rstr) {
-        http_result_obtained(rt, len, rstr);
+      [this](auto const rt, auto const len, auto const &rstr,
+             auto const &body) {
+        http_result_obtained(rt, len, rstr, body);
       });
 }
 
@@ -413,14 +428,16 @@ void custom_resolver_socket_t::on_http_resolve_error() {
 
 void custom_resolver_socket_t::http_result_obtained(
     response_type_e const rt, int const content_length,
-    std::string const &response_string) {
+    std::string const &response_string, std::string const &body) {
 
   switch (rt) {
   case response_type_e::bad_request: {
+    run_final_body_checks(regex_checks_, name_, 400, content_length, body);
     result_map_.insert(name_, content_length, 400);
     return dns_continue_probe();
   }
   case response_type_e::forbidden: {
+    run_final_body_checks(regex_checks_, name_, 403, content_length, body);
     result_map_.insert(name_, content_length, 403);
     return dns_continue_probe();
   }
@@ -447,10 +464,12 @@ void custom_resolver_socket_t::http_result_obtained(
     return send_https_request(response_string);
   }
   case response_type_e::not_found: { // HTTP(S) 404
+    run_final_body_checks(regex_checks_, name_, 404, content_length, body);
     result_map_.insert(name_, content_length, 404);
     return dns_continue_probe();
   }
   case response_type_e::ok: {
+    run_final_body_checks(regex_checks_, name_, 200, content_length, body);
     result_map_.insert(name_, content_length, 200);
     return dns_continue_probe();
   }
@@ -477,6 +496,7 @@ void custom_resolver_socket_t::http_result_obtained(
     return send_https_request(response_string);
   }
   case response_type_e::server_error: {
+    run_final_body_checks(regex_checks_, name_, 503, content_length, body);
     result_map_.insert(name_, content_length, 503);
     return dns_continue_probe();
   }

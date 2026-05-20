@@ -3,6 +3,7 @@
 #include "dns.hpp"
 #include "http/requests_handler.hpp"
 #include "utils/containers.hpp"
+#include "utils/regex_checks.hpp"
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/steady_timer.hpp>
 #include <optional>
@@ -33,6 +34,7 @@ class custom_resolver_socket_t {
   domain_list_t &names_;
   resolver_list_t &resolvers_;
   map_container_t<probe_result_t> &result_map_;
+  regex_check_list_t const *regex_checks_{nullptr};
   net::ssl::context *ssl_context_{nullptr};
   std::optional<udp_stream_t> udp_stream_{};
   std::optional<net::ip::udp::endpoint> default_ep_{};
@@ -67,7 +69,8 @@ private:
 
   // http related "handlers"
   void perform_http_request();
-  void http_result_obtained(response_type_e, int, std::string const &);
+  void http_result_obtained(response_type_e, int, std::string const &,
+                            std::string const &);
   void on_http_resolve_error();
   void send_https_request(std::string const &address);
   void send_http_request(std::string const &address);
@@ -77,7 +80,8 @@ private:
 public:
   custom_resolver_socket_t(net::io_context &, net::ssl::context *,
                            domain_list_t &, resolver_list_t &,
-                           map_container_t<probe_result_t> &);
+                           map_container_t<probe_result_t> &,
+                           regex_check_list_t const * = nullptr);
   void defer_http_request(bool const defer);
   void start();
 };

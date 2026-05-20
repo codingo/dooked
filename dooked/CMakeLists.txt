@@ -69,6 +69,7 @@ set(SRC_FILES
     ./source/http/requests_handler.cpp
     ./source/utils/constants.cpp
     ./source/utils/io_utils.cpp
+    ./source/utils/regex_checks.cpp
     ./source/utils/string_utils.cpp
     ./source/utils/random_utils.cpp
     ./source/utils/ucstring.cpp
@@ -91,6 +92,7 @@ set(HEADERS_FILES
     ./include/utils/io_utils.hpp
     ./include/utils/probe_result.hpp
     ./include/utils/random_utils.hpp
+    ./include/utils/regex_checks.hpp
     ./include/utils/string_utils.hpp
     ./include/utils/ucstring.hpp
     ./include/cli_preprocessor.hpp

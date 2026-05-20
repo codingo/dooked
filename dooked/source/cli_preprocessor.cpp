@@ -6,8 +6,11 @@
 #include "utils/string_utils.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <ctime>
+#include <iomanip>
 #include <set>
 #include <spdlog/spdlog.h>
+#include <sstream>
 
 // defined (and assigned to) in main.cpp
 extern bool silent;
@@ -17,6 +20,194 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+
+namespace {
+
+std::string current_history_date() {
+  std::string current_date{};
+  if (!timet_to_string(current_date, std::time(nullptr), "%m/%d/%Y")) {
+    return {};
+  }
+  return current_date;
+}
+
+std::optional<std::time_t> parse_history_date(std::string const &date) {
+  std::tm tm_date{};
+  std::istringstream input{date};
+  input >> std::get_time(&tm_date, "%m/%d/%Y");
+  if (input.fail()) {
+    return std::nullopt;
+  }
+  tm_date.tm_isdst = -1;
+  auto parsed_time = std::mktime(&tm_date);
+  if (parsed_time == (std::time_t)-1) {
+    return std::nullopt;
+  }
+  return parsed_time;
+}
+
+bool same_dns_record(json_data_t const &previous, std::string const &domain,
+                     probe_result_t const &current) {
+  return case_insensitive_compare(previous.domain_name, domain) &&
+         previous.type == current.type &&
+         case_insensitive_compare(previous.rdata, current.rdata);
+}
+
+std::vector<json_data_t>::const_iterator find_previous_record(
+    std::vector<json_data_t> const &previous_records,
+    std::string const &domain, probe_result_t const &current) {
+  return std::find_if(previous_records.cbegin(), previous_records.cend(),
+                      [&](auto const &previous) {
+                        return same_dns_record(previous, domain, current);
+                      });
+}
+
+std::string history_first_seen(json_data_t const &previous,
+                               std::string const &fallback_date) {
+  if (!previous.first_seen.empty()) {
+    return previous.first_seen;
+  }
+  if (!previous.last_seen.empty()) {
+    return previous.last_seen;
+  }
+  return fallback_date;
+}
+
+std::string history_last_seen(json_data_t const &previous,
+                              std::string const &fallback_date) {
+  if (!previous.last_seen.empty()) {
+    return previous.last_seen;
+  }
+  if (!previous.first_seen.empty()) {
+    return previous.first_seen;
+  }
+  return fallback_date;
+}
+
+int history_seen_count(json_data_t const &previous) {
+  return (std::max)(1, previous.seen);
+}
+
+bool missing_record_is_stale(json_data_t const &previous,
+                             runtime_args_t const &rt_args,
+                             std::time_t today_start) {
+  bool const days_enabled = rt_args.last_seen_days >= 0;
+  bool const date_enabled = !rt_args.last_seen_date.empty();
+  if (!days_enabled && !date_enabled) {
+    return false;
+  }
+
+  auto const last_seen =
+      parse_history_date(history_last_seen(previous, current_history_date()));
+  if (!last_seen) {
+    return days_enabled && rt_args.last_seen_days == 0;
+  }
+
+  if (days_enabled) {
+    auto const cutoff =
+        today_start - static_cast<std::time_t>(rt_args.last_seen_days) * 86400;
+    if (*last_seen <= cutoff) {
+      return true;
+    }
+  }
+
+  if (date_enabled) {
+    auto const cutoff = parse_history_date(rt_args.last_seen_date);
+    if (!cutoff) {
+      spdlog::error("Invalid --lsd date `{}`; expected MM/DD/YYYY",
+                    rt_args.last_seen_date);
+      return false;
+    }
+    return *last_seen <= *cutoff;
+  }
+  return false;
+}
+
+void report_first_seen_record(std::string const &domain,
+                              probe_result_t const &record) {
+  spdlog::info("[FIRST-SEEN][{}][{}] `{}`", domain,
+               dns_record_type_to_str(record.type), record.rdata);
+}
+
+void report_stale_record(json_data_t const &record) {
+  spdlog::info("[LAST-SEEN][{}][{}][{}] `{}`", record.domain_name,
+               dns_record_type_to_str(record.type),
+               history_last_seen(record, "unknown"), record.rdata);
+}
+
+void apply_dns_history(map_container_t<probe_result_t> &result_map,
+                       runtime_args_t const &rt_args) {
+  auto const current_date = current_history_date();
+  auto const *previous_records = rt_args.previous_data
+                                     ? &*rt_args.previous_data
+                                     : nullptr;
+
+  for (auto &result_pair : result_map.result()) {
+    auto const &domain = result_pair.first;
+    for (auto &current_record : result_pair.second.dns_result_list_) {
+      if (previous_records) {
+        auto const previous_iter =
+            find_previous_record(*previous_records, domain, current_record);
+        if (previous_iter != previous_records->cend()) {
+          current_record.first_seen =
+              history_first_seen(*previous_iter, current_date);
+          current_record.last_seen = current_date;
+          current_record.seen = history_seen_count(*previous_iter) + 1;
+          continue;
+        }
+      }
+
+      current_record.first_seen = current_date;
+      current_record.last_seen = current_date;
+      current_record.seen = 1;
+      if (rt_args.report_first_seen) {
+        report_first_seen_record(domain, current_record);
+      }
+    }
+  }
+
+  if (!previous_records) {
+    return;
+  }
+
+  auto const today = parse_history_date(current_date);
+  auto const today_start = today.value_or(std::time(nullptr));
+
+  for (auto const &previous_record : *previous_records) {
+    auto const current_domain_iter =
+        result_map.result().find(previous_record.domain_name);
+    bool const found =
+        current_domain_iter != result_map.result().end() &&
+        std::find_if(current_domain_iter->second.dns_result_list_.cbegin(),
+                     current_domain_iter->second.dns_result_list_.cend(),
+                     [&](auto const &current_record) {
+                       return same_dns_record(previous_record,
+                                              previous_record.domain_name,
+                                              current_record);
+                     }) != current_domain_iter->second.dns_result_list_.cend();
+
+    if (found) {
+      continue;
+    }
+
+    if (missing_record_is_stale(previous_record, rt_args, today_start)) {
+      report_stale_record(previous_record);
+    }
+
+    probe_result_t preserved_record{};
+    preserved_record.rdata = previous_record.rdata;
+    preserved_record.first_seen =
+        history_first_seen(previous_record, current_date);
+    preserved_record.last_seen =
+        history_last_seen(previous_record, current_date);
+    preserved_record.type = previous_record.type;
+    preserved_record.ttl = previous_record.ttl;
+    preserved_record.seen = history_seen_count(previous_record);
+    result_map.append(previous_record.domain_name, preserved_record);
+  }
+}
+
+} // namespace
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -351,11 +542,8 @@ void start_name_checking(runtime_args_t &&rt_args) {
     thread_pool->join();
   }
   if (!silent) {
-    spdlog::info("Writing JSON output");
+    spdlog::info("Preparing DNS history");
   }
-  write_json_result(result_map, rt_args);
-
-  // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
     auto &previous_data = *rt_args.previous_data;
 
@@ -373,9 +561,14 @@ void start_name_checking(runtime_args_t &&rt_args) {
                   return std::tie(a.type, a.rdata) < std::tie(b.type, b.rdata);
                 });
     }
-    return compare_results(*rt_args.previous_data, result_map,
-                           rt_args.content_length);
+    compare_results(*rt_args.previous_data, result_map,
+                    rt_args.content_length);
   }
+  apply_dns_history(result_map, rt_args);
+  if (!silent) {
+    spdlog::info("Writing JSON output");
+  }
+  write_json_result(result_map, rt_args);
 }
 
 void run_program(cli_args_t const &cli_args) {
@@ -477,6 +670,9 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.report_first_seen = cli_args.report_first_seen;
+  rt_args.last_seen_days = cli_args.last_seen_days;
+  rt_args.last_seen_date = cli_args.last_seen_date;
   return start_name_checking(std::move(rt_args));
 }
 

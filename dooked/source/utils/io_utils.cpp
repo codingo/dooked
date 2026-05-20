@@ -6,6 +6,15 @@ void to_json(json &j, probe_result_t const &record) {
   j = json{{"ttl", record.ttl},
            {"type", dns_record_type_to_str(record.type)},
            {"info", record.rdata}};
+  if (!record.first_seen.empty()) {
+    j["first-seen"] = record.first_seen;
+  }
+  if (!record.last_seen.empty()) {
+    j["last-seen"] = record.last_seen;
+  }
+  if (record.seen > 0) {
+    j["seen"] = record.seen;
+  }
 }
 
 bool is_text_file(std::string const &file_extension) {

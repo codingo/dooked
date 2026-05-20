@@ -417,11 +417,11 @@ void custom_resolver_socket_t::http_result_obtained(
 
   switch (rt) {
   case response_type_e::bad_request: {
-    result_map_.insert(name_, content_length, 400);
+    result_map_.insert(name_, content_length, 400, response_string);
     return dns_continue_probe();
   }
   case response_type_e::forbidden: {
-    result_map_.insert(name_, content_length, 403);
+    result_map_.insert(name_, content_length, 403, response_string);
     return dns_continue_probe();
   }
   case response_type_e::cannot_resolve_name: {
@@ -447,11 +447,11 @@ void custom_resolver_socket_t::http_result_obtained(
     return send_https_request(response_string);
   }
   case response_type_e::not_found: { // HTTP(S) 404
-    result_map_.insert(name_, content_length, 404);
+    result_map_.insert(name_, content_length, 404, response_string);
     return dns_continue_probe();
   }
   case response_type_e::ok: {
-    result_map_.insert(name_, content_length, 200);
+    result_map_.insert(name_, content_length, 200, response_string);
     return dns_continue_probe();
   }
   case response_type_e::recv_timed_out: { // retry, wait timeout
@@ -477,11 +477,11 @@ void custom_resolver_socket_t::http_result_obtained(
     return send_https_request(response_string);
   }
   case response_type_e::server_error: {
-    result_map_.insert(name_, content_length, 503);
+    result_map_.insert(name_, content_length, 503, response_string);
     return dns_continue_probe();
   }
   default: {
-    result_map_.insert(name_, 0, 0);
+    result_map_.insert(name_, 0, 0, response_string);
     return dns_continue_probe();
   }
   } // end switch

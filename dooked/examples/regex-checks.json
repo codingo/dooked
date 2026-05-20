@@ -1,0 +1,21 @@
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "(dev|test)",
+      "alert": "domain contains an environment marker",
+      "ignore_case": true
+    },
+    {
+      "field": "content",
+      "regex": "Copyright 2020",
+      "alert": "outdated copyright banner"
+    },
+    {
+      "field": "rdata",
+      "regex": "v=spf1",
+      "alert": "SPF TXT record found",
+      "ignore_case": true
+    }
+  ]
+}

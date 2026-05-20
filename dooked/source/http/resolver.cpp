@@ -65,11 +65,11 @@ void http_resolver_t::tcp_request_result(response_type_e const rt,
                                          std::string const &response_string) {
   switch (rt) {
   case response_type_e::bad_request: {
-    result_map_.insert(name_, content_length, 400);
+    result_map_.insert(name_, content_length, 400, response_string);
     return send_next_request();
   }
   case response_type_e::forbidden: {
-    result_map_.insert(name_, content_length, 403);
+    result_map_.insert(name_, content_length, 403, response_string);
     return send_next_request();
   }
   case response_type_e::cannot_resolve_name: {
@@ -97,11 +97,11 @@ void http_resolver_t::tcp_request_result(response_type_e const rt,
     return send_https_request(response_string);
   }
   case response_type_e::not_found: { // HTTP(S) 404
-    result_map_.insert(name_, content_length, 404);
+    result_map_.insert(name_, content_length, 404, response_string);
     return send_next_request();
   }
   case response_type_e::ok: {
-    result_map_.insert(name_, content_length, 200);
+    result_map_.insert(name_, content_length, 200, response_string);
     return send_next_request();
   }
   case response_type_e::recv_timed_out: { // retry, wait timeout
@@ -122,11 +122,11 @@ void http_resolver_t::tcp_request_result(response_type_e const rt,
     return switch_ssl_method(response_string);
   }
   case response_type_e::server_error: {
-    result_map_.insert(name_, content_length, 503);
+    result_map_.insert(name_, content_length, 503, response_string);
     return send_next_request();
   }
   default: {
-    result_map_.insert(name_, 0, 0);
+    result_map_.insert(name_, 0, 0, response_string);
     return send_next_request();
   }
   } // end switch

@@ -39,6 +39,8 @@ int main(int argc, char **argv) {
   app.add_flag(
       "--defer", cli_args.post_http_request,
       "defers http request until after all DNS requests have been completed");
+  app.add_option("--checks,--check-config", cli_args.check_config_filename,
+                 "load runtime regex checks from a JSON config file");
   app.add_flag("--compare-cl", compare_cl,
                "compare content-length of HTTP requests");
 

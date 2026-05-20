@@ -39,3 +39,47 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Runtime regex checks
+
+Use `--checks <file>` or `--check-config <file>` to load custom alert checks
+from a JSON configuration file while dooked is running:
+
+```
+dooked -i domains.txt -o results --checks checks.json
+```
+
+The config may be either a JSON array or an object with a `checks` array. Each
+check requires `field`, `regex`, and `alert`. `pattern` is accepted as an alias
+for `regex`, `message` is accepted as an alias for `alert`, and checks are
+case-sensitive unless `ignore_case: true` or `case_sensitive: false` is set.
+
+```json
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "(dev|test)",
+      "alert": "domain contains an environment marker",
+      "ignore_case": true
+    },
+    {
+      "field": "content",
+      "regex": "Copyright 2020",
+      "alert": "outdated copyright banner"
+    },
+    {
+      "field": "rdata",
+      "regex": "v=spf1",
+      "alert": "SPF TXT record found"
+    }
+  ]
+}
+```
+
+Supported fields are domain aliases (`domain`, `domain_name`), DNS record fields
+(`type`, `info`, `rdata`, `ttl`), HTTP fields (`content_length`, `http_code`,
+`http_status`, `code_string`), and response body aliases (`body`,
+`response_body`, `page_content`, `content`). Response bodies are kept only in
+memory for matching, capped at the first 64 KiB, and are not written to the JSON
+result file.

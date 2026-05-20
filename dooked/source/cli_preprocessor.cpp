@@ -339,7 +339,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
   // if we deferred HTTP/S "probe", now is the time to get to it
   if (deferring) {
-    io_context.reset();
+    io_context.restart();
     thread_pool.emplace(thread_count);
     rt_args.names.emplace(std::move(*deferred_names_));
     for (std::size_t index = 0; index < thread_count; ++index) {
@@ -354,6 +354,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  run_regex_checks(result_map, rt_args.regex_checks);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -380,6 +381,20 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
 void run_program(cli_args_t const &cli_args) {
   runtime_args_t rt_args{};
+
+  if (!cli_args.check_config_filename.empty()) {
+    std::string error_message{};
+    auto regex_checks =
+        load_regex_checks(cli_args.check_config_filename, error_message);
+    if (!regex_checks) {
+      return spdlog::error(error_message);
+    }
+    rt_args.regex_checks = std::move(*regex_checks);
+    if (!silent) {
+      spdlog::info("Loaded {} regex check(s)", rt_args.regex_checks.size());
+    }
+  }
+
   // settle resolvers.
   std::vector<std::string> resolver_strings{};
   if (cli_args.resolver_filename.empty()) {

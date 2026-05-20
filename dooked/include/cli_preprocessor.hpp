@@ -1,5 +1,6 @@
 #pragma once
 
+#include "checks/regex_checks.hpp"
 #include "dns/dns_resolver.hpp"
 #include "utils/io_utils.hpp"
 #include <thread>
@@ -19,6 +20,7 @@ struct cli_args_t {
   std::string resolver_filename{};
   std::string output_filename{};
   std::string input_filename{};
+  std::string check_config_filename{};
 
   int file_type{};
   int post_http_request{};
@@ -34,6 +36,7 @@ struct runtime_args_t {
   std::unique_ptr<std::ofstream> output_file{};
   std::string output_filename{};
   http_process_e http_request_time_{};
+  regex_check_list_t regex_checks{};
   int thread_count{};
   int content_length{-1};
 };

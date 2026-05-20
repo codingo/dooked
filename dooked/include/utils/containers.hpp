@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <queue>
+#include <string>
 #include <vector>
 
 namespace dooked {
@@ -31,6 +32,7 @@ public:
 struct http_response_t {
   int content_length_{};
   int http_status_{};
+  std::string body_{};
 };
 
 template <typename ValueType> struct http_dns_response_t {
@@ -52,9 +54,11 @@ template <typename ValueType> class map_container_t {
   }
 
   void insert_impl(std::string const &name, int const len,
-                   int const http_status) {
+                   int const http_status,
+                   std::string const &body) {
     map_[name].http_result_.content_length_ = len;
     map_[name].http_result_.http_status_ = http_status;
+    map_[name].http_result_.body_ = body;
   }
 
 public:
@@ -74,12 +78,13 @@ public:
     append_impl(key, value);
   }
 
-  void insert(std::string const &name, int const len, int const http_status) {
+  void insert(std::string const &name, int const len, int const http_status,
+              std::string const &body = {}) {
     if (!opt_mutex_) {
-      return insert_impl(name, len, http_status);
+      return insert_impl(name, len, http_status, body);
     }
     std::lock_guard<std::mutex> lock_g{*opt_mutex_};
-    insert_impl(name, len, http_status);
+    insert_impl(name, len, http_status, body);
   }
   // only used by main thread, after all "computations" has been
   // done. There's no need for locks here.

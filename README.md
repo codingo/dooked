@@ -39,3 +39,33 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Runtime regex checks
+
+Use `--checks <file.json>` or `--check-config <file.json>` to load custom
+notifications without changing the output JSON format.
+
+The config can be a JSON array, or an object with a `checks` array:
+
+```json
+{
+  "checks": [
+    {
+      "field": "domain",
+      "regex": "(dev|test)",
+      "alert": "development-looking domain"
+    },
+    {
+      "field": "body",
+      "regex": "copyright 2020",
+      "alert": "outdated copyright banner",
+      "ignore_case": true
+    }
+  ]
+}
+```
+
+Supported fields are `domain`, DNS fields (`type`, `info`, `rdata`, `ttl`),
+HTTP metadata (`http_code`, `code_string`, `content_length`), and response
+`body`. Body checks are evaluated in memory while probing and are not written
+to the JSON output.

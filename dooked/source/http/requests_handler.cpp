@@ -46,7 +46,7 @@ void http_request_handler_t::establish_connection() {
 void http_request_handler_t::resolve_name() {
   if (resolver_) {
     if (callback_) {
-      callback_(response_type_e::cannot_resolve_name, 0, "");
+      callback_(response_type_e::cannot_resolve_name, 0, "", "");
     }
     return;
   }
@@ -55,7 +55,8 @@ void http_request_handler_t::resolve_name() {
       domain_, "http", [this](auto const &error, auto const &results) {
         if (error) {
           if (callback_) {
-            callback_(response_type_e::cannot_resolve_name, 0, error.message());
+            callback_(response_type_e::cannot_resolve_name, 0, error.message(),
+                      "");
           }
           return;
         }
@@ -78,7 +79,7 @@ void http_request_handler_t::on_connected(beast::error_code const ec) {
 void http_request_handler_t::reconnect() {
   if (++connect_retries_ >= 3) {
     if (callback_) {
-      callback_(response_type_e::cannot_connect, 0, {});
+      callback_(response_type_e::cannot_connect, 0, {}, {});
     }
     return;
   }
@@ -99,7 +100,7 @@ void http_request_handler_t::send_http_data() {
 void http_request_handler_t::resend_data() {
   if (++send_retries_ >= 3) {
     if (callback_) {
-      return callback_(response_type_e::cannot_send, 0, {});
+      return callback_(response_type_e::cannot_send, 0, {}, {});
     }
   } else {
     send_http_data();
@@ -128,7 +129,7 @@ void http_request_handler_t::on_data_received(
     }
 #endif // _DEBUG
     if (callback_) {
-      callback_(response_type_e::recv_timed_out, 0, {});
+      callback_(response_type_e::recv_timed_out, 0, {}, {});
     }
     return;
   }
@@ -184,7 +185,7 @@ void http_request_handler_t::on_data_received(
     }
   }
   if (callback_) {
-    callback_(response_int, content_length, response_string);
+    callback_(response_int, content_length, response_string, response_->body());
   }
 }
 
@@ -236,7 +237,7 @@ void https_request_handler_t::on_ssl_handshake(
       error_type = response_type_e::ssl_change_context;
     }
     if (callback_) {
-      callback_(error_type, 0, domain_name_);
+      callback_(error_type, 0, domain_name_, "");
     }
     return;
   }
@@ -254,7 +255,7 @@ void https_request_handler_t::send_https_data() {
 void https_request_handler_t::on_data_sent(beast::error_code ec, std::size_t) {
   if (ec) {
     if (callback_) {
-      callback_(response_type_e::cannot_send, 0, ec.message());
+      callback_(response_type_e::cannot_send, 0, ec.message(), "");
     }
     return;
   }
@@ -302,7 +303,7 @@ void https_request_handler_t::connect() {
 void https_request_handler_t::reconnect() {
   if (++reconnect_count_ >= 3) {
     if (callback_) {
-      callback_(response_type_e::cannot_connect, 0, {});
+      callback_(response_type_e::cannot_connect, 0, {}, {});
     }
     return;
   }
@@ -324,7 +325,7 @@ void https_request_handler_t::on_connect(beast::error_code const ec) {
 void https_request_handler_t::resolve_name() {
   if (resolver_) { // we have tried resolving the name earlier
     if (callback_) {
-      callback_(response_type_e::cannot_resolve_name, 0, "");
+      callback_(response_type_e::cannot_resolve_name, 0, "", "");
     }
     return;
   }
@@ -333,7 +334,8 @@ void https_request_handler_t::resolve_name() {
       domain_name_, "https", [this](auto const &error, auto const &results) {
         if (error) {
           if (callback_) {
-            callback_(response_type_e::cannot_resolve_name, 0, error.message());
+            callback_(response_type_e::cannot_resolve_name, 0, error.message(),
+                      "");
             return;
           }
         }
@@ -354,7 +356,7 @@ void https_request_handler_t::on_data_received(
       response_int = response_type_e::recv_timed_out;
     }
     if (callback_) {
-      callback_(response_int, 0, domain_name_);
+      callback_(response_int, 0, domain_name_, "");
     }
     return;
   }
@@ -405,7 +407,8 @@ void https_request_handler_t::on_data_received(
     }
   }
   if (callback_) {
-    callback_(response_int, content_length, response_string);
+    callback_(response_int, content_length, response_string,
+              response_->body());
   }
 }
 

@@ -28,6 +28,8 @@ int main(int argc, char **argv) {
   app.add_option("-r,--resolver", cli_args.resolver,
                  "a (possible) list of resolvers separated by comma. If -l "
                  "and -r isn't specified, -r is defaulted to 8.8.8.8");
+  app.add_option("--checks,--check-config", cli_args.checks_filename,
+                 "JSON file containing runtime regex notification checks");
   app.add_option("-t,--threads", cli_args.thread_count,
                  "total threads to use(default: " +
                      std::to_string(DOOKED_SUPPORTED_THREADS) + ")");

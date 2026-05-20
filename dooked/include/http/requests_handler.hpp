@@ -32,7 +32,8 @@ enum class ssl_method_e {
   undefined
 };
 
-using completion_cb_t = std::function<void(response_type_e, int, std::string)>;
+using completion_cb_t =
+    std::function<void(response_type_e, int, std::string, std::string)>;
 
 class http_request_handler_t {
   net::io_context &io_;

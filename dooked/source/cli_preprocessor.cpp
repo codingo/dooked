@@ -179,7 +179,7 @@ void dns_functor(net::io_context &io_context, net::ssl::context *ssl_context,
   for (std::size_t i = 0; i < socket_count; ++i) {
     sockets[i] = std::make_unique<custom_resolver_socket_t>(
         io_context, ssl_context, *rt_args.names, *rt_args.resolvers,
-        result_map);
+        result_map, &rt_args.regex_checks);
     sockets[i]->defer_http_request(deferring);
     sockets[i]->start();
   }
@@ -194,7 +194,8 @@ void http_functor(net::io_context &io_context, net::ssl::context *ssl_context,
   sockets.resize(socket_count);
   for (std::size_t i = 0; i < socket_count; ++i) {
     sockets[i] = std::make_unique<http_resolver_t>(io_context, ssl_context,
-                                                   *rt_args.names, result_map);
+                                                   *rt_args.names, result_map,
+                                                   &rt_args.regex_checks);
     sockets[i]->start();
   }
   io_context.run();
@@ -354,6 +355,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  run_result_checks(rt_args.regex_checks, result_map);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -403,6 +405,13 @@ void run_program(cli_args_t const &cli_args) {
   // read input file
   if (!read_input_file(cli_args, rt_args)) {
     return;
+  }
+  if (!cli_args.checks_filename.empty()) {
+    auto checks = load_regex_checks(cli_args.checks_filename);
+    if (!checks) {
+      return;
+    }
+    rt_args.regex_checks = std::move(*checks);
   }
   // try opening an output file
   {

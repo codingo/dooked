@@ -139,7 +139,8 @@ void http_request_handler_t::on_data_received(
   if (status_code_simple == 2) {
     response_int = response_type_e::ok;
   } else if (status_code_simple == 3) { // redirected
-    response_string = (*response_)[http::field::location].to_string();
+    auto const location = (*response_)[http::field::location];
+    response_string = std::string{location.data(), location.size()};
     if (response_string.empty()) {
       response_int = response_type_e::unknown_response;
     } else {
@@ -171,7 +172,9 @@ void http_request_handler_t::on_data_received(
   int content_length{};
   if (response_->has_content_length()) {
     try {
-      auto const cl_str = (*response_)[http::field::content_length].to_string();
+      auto const content_length_header = (*response_)[http::field::content_length];
+      auto const cl_str = std::string{content_length_header.data(),
+                                      content_length_header.size()};
       content_length = std::stoi(cl_str);
     } catch (std::exception const &) {
     }
@@ -246,9 +249,10 @@ void https_request_handler_t::on_ssl_handshake(
 void https_request_handler_t::send_https_data() {
   beast::get_lowest_layer(*ssl_stream_)
       .expires_after(std::chrono::seconds(DOOKED_MAX_HTTP_WAIT_TIME));
-  http::async_write(
-      *ssl_stream_, *get_request_,
-      beast::bind_front_handler(&https_request_handler_t::on_data_sent, this));
+  http::async_write(*ssl_stream_, *get_request_,
+                    [this](beast::error_code ec, std::size_t bytes_sent) {
+                      on_data_sent(ec, bytes_sent);
+                    });
 }
 
 void https_request_handler_t::on_data_sent(beast::error_code ec, std::size_t) {
@@ -365,7 +369,8 @@ void https_request_handler_t::on_data_received(
   if (status_code_simple == 2) {
     response_int = response_type_e::ok;
   } else if (status_code_simple == 3) { // redirected
-    response_string = (*response_)[http::field::location].to_string();
+    auto const location = (*response_)[http::field::location];
+    response_string = std::string{location.data(), location.size()};
     if (response_string.empty()) {
       response_int = response_type_e::unknown_response;
     } else {
@@ -392,7 +397,9 @@ void https_request_handler_t::on_data_received(
   int content_length = 0;
   if (response_->has_content_length()) {
     try {
-      auto const cl_str = (*response_)[http::field::content_length].to_string();
+      auto const content_length_header = (*response_)[http::field::content_length];
+      auto const cl_str = std::string{content_length_header.data(),
+                                      content_length_header.size()};
       content_length = std::stoi(cl_str);
     } catch (std::exception const &) {
     }

@@ -39,3 +39,28 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### DNS history tracking
+
+JSON output now records DNS history on each `dns_probe` entry:
+
+- `first_seen`: first date the record was observed (`YYYY-MM-DD`)
+- `last_seen`: latest date the record was observed (`YYYY-MM-DD`)
+- `seen`: number of runs where the record was observed
+
+When a previous JSON result is used as input, dooked preserves old records that are
+not seen in the current run. This makes load-balanced targets easier to track,
+because a rotating IP is not lost just because it disappeared from one scan.
+
+Useful flags:
+
+```bash
+# Print records discovered for the first time in this run
+dooked --fs -i domains.txt -o current.json
+
+# Re-scan a previous result and report records not seen in the last 30 days
+dooked --ls 30 -i current.json -o next.json
+
+# Report records last seen before a specific US date
+dooked --lsd 01/31/2026 -i current.json -o next.json
+```

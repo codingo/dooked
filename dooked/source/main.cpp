@@ -34,8 +34,14 @@ int main(int argc, char **argv) {
   app.add_option(
       "-c,--content-length", cli_args.content_length,
       "show content lengths that changed more than --content-length");
+  app.add_option("--ls", cli_args.last_seen_days,
+                 "show DNS records last seen before today minus DAYS");
+  app.add_option("--lsd", cli_args.last_seen_date,
+                 "show DNS records last seen before MM/DD/YYYY or MM-DD-YYYY");
   app.add_flag("-d,--include-date", cli_args.include_date,
                "append present datetime(-ddMMyyyy_hhmmss) in output name");
+  app.add_flag("--fs", cli_args.first_seen_log,
+               "show DNS records first seen in this run");
   app.add_flag(
       "--defer", cli_args.post_http_request,
       "defers http request until after all DNS requests have been completed");

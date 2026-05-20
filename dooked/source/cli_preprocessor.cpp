@@ -6,8 +6,13 @@
 #include "utils/string_utils.hpp"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <cctype>
+#include <ctime>
+#include <map>
 #include <set>
 #include <spdlog/spdlog.h>
+#include <string>
+#include <tuple>
 
 // defined (and assigned to) in main.cpp
 extern bool silent;
@@ -17,6 +22,158 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+
+std::string today_iso_date() {
+  std::string today{};
+  if (!timet_to_string(today, std::time(nullptr), "%Y-%m-%d")) {
+    return {};
+  }
+  return today;
+}
+
+std::string date_days_ago(int const days) {
+  if (days < 0) {
+    return {};
+  }
+  std::time_t threshold = std::time(nullptr) -
+                          static_cast<std::time_t>(days) * 24 * 60 * 60;
+  std::string date{};
+  if (!timet_to_string(date, threshold, "%Y-%m-%d")) {
+    return {};
+  }
+  return date;
+}
+
+std::string parse_us_date(std::string date) {
+  trim(date);
+  if (date.size() != 10 || !std::isdigit(date[0]) || !std::isdigit(date[1]) ||
+      !std::isdigit(date[3]) || !std::isdigit(date[4]) ||
+      !std::isdigit(date[6]) || !std::isdigit(date[7]) ||
+      !std::isdigit(date[8]) || !std::isdigit(date[9]) ||
+      !((date[2] == '/' && date[5] == '/') ||
+        (date[2] == '-' && date[5] == '-'))) {
+    return {};
+  }
+  int const month = std::stoi(date.substr(0, 2));
+  int const day = std::stoi(date.substr(3, 2));
+  int const year = std::stoi(date.substr(6, 4));
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return {};
+  }
+  std::tm tm{};
+  tm.tm_year = year - 1900;
+  tm.tm_mon = month - 1;
+  tm.tm_mday = day;
+  tm.tm_isdst = -1;
+  auto const normalized = std::mktime(&tm);
+  if (normalized == static_cast<std::time_t>(-1) || tm.tm_year != year - 1900 ||
+      tm.tm_mon != month - 1 || tm.tm_mday != day) {
+    return {};
+  }
+  char output[11]{};
+  std::strftime(output, sizeof(output), "%Y-%m-%d", &tm);
+  return std::string{output};
+}
+
+using history_key_t = std::tuple<std::string, dns_record_type_e, std::string>;
+
+history_key_t history_key(std::string const &domain, dns_record_type_e const type,
+                          std::string const &rdata) {
+  return {domain, type, rdata};
+}
+
+history_key_t history_key(json_data_t const &record) {
+  return history_key(record.domain_name, record.type, record.rdata);
+}
+
+history_key_t history_key(std::string const &domain, probe_result_t const &record) {
+  return history_key(domain, record.type, record.rdata);
+}
+
+probe_result_t json_to_probe_result(json_data_t const &record) {
+  probe_result_t result{};
+  result.rdata = record.rdata;
+  result.type = record.type;
+  result.ttl = static_cast<std::uint32_t>(record.ttl);
+  result.first_seen = record.first_seen;
+  result.last_seen = record.last_seen;
+  result.seen = record.seen > 0 ? record.seen : 1;
+  return result;
+}
+
+void log_first_seen(std::string const &domain, probe_result_t const &record) {
+  spdlog::info("[FIRST-SEEN][{}][{}] `{}`", domain,
+               dns_record_type_to_str(record.type), record.rdata);
+}
+
+void log_last_seen(std::string const &domain, probe_result_t const &record) {
+  spdlog::info("[LAST-SEEN][{}][{}] `{}` last seen `{}`", domain,
+               dns_record_type_to_str(record.type), record.rdata,
+               record.last_seen);
+}
+
+void merge_history(map_container_t<probe_result_t> &result_map,
+                   std::optional<std::vector<json_data_t>> const &previous_data,
+                   runtime_args_t const &rt_args) {
+  auto const today = today_iso_date();
+  std::map<history_key_t, json_data_t> previous_by_key{};
+  if (previous_data) {
+    for (auto const &record : *previous_data) {
+      previous_by_key.emplace(history_key(record), record);
+    }
+  }
+
+  std::set<history_key_t> seen_this_run{};
+  for (auto &result_pair : result_map.result()) {
+    for (auto &record : result_pair.second.dns_result_list_) {
+      auto const key = history_key(result_pair.first, record);
+      seen_this_run.insert(key);
+      auto const prev_iter = previous_by_key.find(key);
+      if (prev_iter == previous_by_key.end()) {
+        record.first_seen = today;
+        record.last_seen = today;
+        record.seen = 1;
+        if (rt_args.first_seen_log) {
+          log_first_seen(result_pair.first, record);
+        }
+      } else {
+        auto const &previous = prev_iter->second;
+        record.first_seen = previous.first_seen.empty() ? today : previous.first_seen;
+        record.last_seen = today;
+        record.seen = (previous.seen > 0 ? previous.seen : 1) + 1;
+      }
+    }
+  }
+
+  if (previous_data) {
+    for (auto const &previous : *previous_data) {
+      if (seen_this_run.find(history_key(previous)) != seen_this_run.end()) {
+        continue;
+      }
+      auto preserved = json_to_probe_result(previous);
+      if (preserved.first_seen.empty()) {
+        preserved.first_seen = today;
+      }
+      if (preserved.last_seen.empty()) {
+        preserved.last_seen = preserved.first_seen;
+      }
+      result_map.append(previous.domain_name, preserved);
+      result_map.insert(previous.domain_name, previous.content_length,
+                        previous.http_code);
+    }
+  }
+
+  if (!rt_args.last_seen_threshold.empty()) {
+    for (auto const &result_pair : result_map.cresult()) {
+      for (auto const &record : result_pair.second.dns_result_list_) {
+        if (!record.last_seen.empty() &&
+            record.last_seen < rt_args.last_seen_threshold) {
+          log_last_seen(result_pair.first, record);
+        }
+      }
+    }
+  }
+}
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -339,7 +496,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
   // if we deferred HTTP/S "probe", now is the time to get to it
   if (deferring) {
-    io_context.reset();
+    io_context.restart();
     thread_pool.emplace(thread_count);
     rt_args.names.emplace(std::move(*deferred_names_));
     for (std::size_t index = 0; index < thread_count; ++index) {
@@ -350,12 +507,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
     }
     thread_pool->join();
   }
-  if (!silent) {
-    spdlog::info("Writing JSON output");
-  }
-  write_json_result(result_map, rt_args);
-
-  // compare old with new result -- only if we had previous record
+  // compare old with new result before preserving missing history records.
   if (rt_args.previous_data) {
     auto &previous_data = *rt_args.previous_data;
 
@@ -373,9 +525,14 @@ void start_name_checking(runtime_args_t &&rt_args) {
                   return std::tie(a.type, a.rdata) < std::tie(b.type, b.rdata);
                 });
     }
-    return compare_results(*rt_args.previous_data, result_map,
-                           rt_args.content_length);
+    compare_results(*rt_args.previous_data, result_map, rt_args.content_length);
   }
+
+  if (!silent) {
+    spdlog::info("Writing JSON output");
+  }
+  merge_history(result_map, rt_args.previous_data, rt_args);
+  write_json_result(result_map, rt_args);
 }
 
 void run_program(cli_args_t const &cli_args) {
@@ -477,6 +634,19 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.first_seen_log = cli_args.first_seen_log;
+  if (!cli_args.last_seen_date.empty()) {
+    rt_args.last_seen_threshold = parse_us_date(cli_args.last_seen_date);
+    if (rt_args.last_seen_threshold.empty()) {
+      return spdlog::error("invalid --lsd date `{}`; use MM/DD/YYYY or MM-DD-YYYY",
+                           cli_args.last_seen_date);
+    }
+  } else if (cli_args.last_seen_days >= 0) {
+    rt_args.last_seen_threshold = date_days_ago(cli_args.last_seen_days);
+    if (rt_args.last_seen_threshold.empty()) {
+      return spdlog::error("invalid --ls value `{}`", cli_args.last_seen_days);
+    }
+  }
   return start_name_checking(std::move(rt_args));
 }
 

@@ -29,7 +29,10 @@ struct json_data_t {
   int ttl{};
   int http_code{};
   int content_length{};
+  std::string first_seen{};
+  std::string last_seen{};
   dns_record_type_e type{};
+  int seen{1};
 
   static json_data_t serialize(std::string const &d, int const len,
                                int const http_code,
@@ -42,7 +45,34 @@ struct json_data_t {
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
     data.content_length = len;
     data.http_code = http_code;
+    data.first_seen = get_history_string(json_object, "first_seen",
+                                         "first-seen");
+    data.last_seen =
+        get_history_string(json_object, "last_seen", "last-seen");
+    data.seen = get_history_count(json_object);
     return data;
+  }
+
+private:
+  static std::string get_history_string(json::object_t const &json_object,
+                                        char const *primary_key,
+                                        char const *legacy_key) {
+    auto iter = json_object.find(primary_key);
+    if (iter == json_object.cend()) {
+      iter = json_object.find(legacy_key);
+    }
+    if (iter != json_object.cend() && iter->second.is_string()) {
+      return iter->second.get<json::string_t>();
+    }
+    return {};
+  }
+
+  static int get_history_count(json::object_t const &json_object) {
+    auto const iter = json_object.find("seen");
+    if (iter != json_object.cend() && iter->second.is_number_integer()) {
+      return iter->second.get<json::number_integer_t>();
+    }
+    return 1;
   }
 };
 

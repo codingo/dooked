@@ -24,7 +24,10 @@ struct cli_args_t {
   int post_http_request{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
   bool include_date{false};
+  bool first_seen_log{false};
+  std::string last_seen_date{};
 };
 
 struct runtime_args_t {
@@ -36,6 +39,8 @@ struct runtime_args_t {
   http_process_e http_request_time_{};
   int thread_count{};
   int content_length{-1};
+  bool first_seen_log{false};
+  std::string last_seen_threshold{};
 };
 
 void run_program(cli_args_t const &cli_args);

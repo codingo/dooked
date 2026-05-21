@@ -72,6 +72,7 @@ set(SRC_FILES
     ./source/utils/string_utils.cpp
     ./source/utils/random_utils.cpp
     ./source/utils/ucstring.cpp
+    ./source/regex_alerts.cpp
     ./source/cli_preprocessor.cpp
     ./source/main.cpp
 )
@@ -93,6 +94,7 @@ set(HEADERS_FILES
     ./include/utils/random_utils.hpp
     ./include/utils/string_utils.hpp
     ./include/utils/ucstring.hpp
+    ./include/regex_alerts.hpp
     ./include/cli_preprocessor.hpp
 )
 

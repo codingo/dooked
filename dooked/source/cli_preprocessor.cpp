@@ -1,5 +1,6 @@
 #include "cli_preprocessor.hpp"
 #include "dns/dns_resolver.hpp"
+#include "regex_alerts.hpp"
 #include "http/resolver.hpp"
 #include "utils/exceptions.hpp"
 #include "utils/random_utils.hpp"
@@ -354,6 +355,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  run_regex_alerts(load_regex_alert_rules(rt_args.regex_alert_filename), result_map);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -477,6 +479,7 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.regex_alert_filename = cli_args.regex_alert_filename;
   return start_name_checking(std::move(rt_args));
 }
 

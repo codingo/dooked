@@ -39,3 +39,18 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### Regex alerts
+
+Use `--regex-alerts <file>` to log custom alerts when a DNS/HTTP probe result matches a regex. The config can be a JSON array or an object with a `checks` array:
+
+```json
+{
+  "checks": [
+    {"field": "rdata", "regex": "(?i)github", "alert": "github infrastructure"},
+    {"field": "http_code", "regex": "^30[12]$", "alert": "redirect detected"}
+  ]
+}
+```
+
+Supported fields: `domain`/`name`, `http_code`, `content_length`, `dns_type`/`type`, `rdata`/`info`.

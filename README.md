@@ -39,3 +39,27 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### History tracking
+
+When a previous JSON result is used as input, dooked now keeps DNS records that
+were seen in earlier runs and annotates each record with:
+
+- `first-seen`: UTC time the record first appeared in the dataset
+- `last-seen`: UTC time the record was most recently observed
+- `seen`: number of runs where the record was observed
+
+This helps with load-balanced targets where valid records rotate between runs.
+The following flags surface the history:
+
+```sh
+dooked -i previous.json --fs
+dooked -i previous.json --ls 2
+dooked -i previous.json --lsd 05/31/2026
+```
+
+- `--fs` reports records first seen during the current run.
+- `--ls <days>` reports records missing from the current run and not seen for
+  at least that many days.
+- `--lsd <MM/DD/YYYY>` reports records missing from the current run and last
+  seen on or before that date.

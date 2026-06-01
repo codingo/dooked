@@ -19,12 +19,15 @@ struct cli_args_t {
   std::string resolver_filename{};
   std::string output_filename{};
   std::string input_filename{};
+  std::string last_seen_date{};
 
   int file_type{};
   int post_http_request{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
   bool include_date{false};
+  bool first_seen_alert{false};
 };
 
 struct runtime_args_t {
@@ -36,6 +39,9 @@ struct runtime_args_t {
   http_process_e http_request_time_{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
+  std::string last_seen_date{};
+  bool first_seen_alert{false};
 };
 
 void run_program(cli_args_t const &cli_args);

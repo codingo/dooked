@@ -26,9 +26,12 @@ void trim(std::string &);
 struct json_data_t {
   std::string domain_name{};
   std::string rdata{};
+  std::string first_seen{};
+  std::string last_seen{};
   int ttl{};
   int http_code{};
   int content_length{};
+  int seen{};
   dns_record_type_e type{};
 
   static json_data_t serialize(std::string const &d, int const len,
@@ -40,6 +43,19 @@ struct json_data_t {
         dns_str_to_record_type(json_object["type"].get<json::string_t>());
     data.rdata = json_object["info"].get<json::string_t>();
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
+    if (json_object.count("first-seen") != 0) {
+      data.first_seen = json_object["first-seen"].get<json::string_t>();
+    } else if (json_object.count("first_seen") != 0) {
+      data.first_seen = json_object["first_seen"].get<json::string_t>();
+    }
+    if (json_object.count("last-seen") != 0) {
+      data.last_seen = json_object["last-seen"].get<json::string_t>();
+    } else if (json_object.count("last_seen") != 0) {
+      data.last_seen = json_object["last_seen"].get<json::string_t>();
+    }
+    if (json_object.count("seen") != 0) {
+      data.seen = json_object["seen"].get<json::number_integer_t>();
+    }
     data.content_length = len;
     data.http_code = http_code;
     return data;

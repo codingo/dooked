@@ -10,6 +10,10 @@ extern bool silent;
 
 namespace dooked {
 
+std::string header_value_to_string(beast::string_view const value) {
+  return {value.data(), value.size()};
+}
+
 http_request_handler_t::http_request_handler_t(net::io_context &io_context,
                                                std::string domain_name)
     : io_{io_context}, domain_{std::move(domain_name)} {}
@@ -139,7 +143,8 @@ void http_request_handler_t::on_data_received(
   if (status_code_simple == 2) {
     response_int = response_type_e::ok;
   } else if (status_code_simple == 3) { // redirected
-    response_string = (*response_)[http::field::location].to_string();
+    response_string =
+        header_value_to_string((*response_)[http::field::location]);
     if (response_string.empty()) {
       response_int = response_type_e::unknown_response;
     } else {
@@ -171,7 +176,8 @@ void http_request_handler_t::on_data_received(
   int content_length{};
   if (response_->has_content_length()) {
     try {
-      auto const cl_str = (*response_)[http::field::content_length].to_string();
+      auto const cl_str =
+          header_value_to_string((*response_)[http::field::content_length]);
       content_length = std::stoi(cl_str);
     } catch (std::exception const &) {
     }
@@ -365,7 +371,8 @@ void https_request_handler_t::on_data_received(
   if (status_code_simple == 2) {
     response_int = response_type_e::ok;
   } else if (status_code_simple == 3) { // redirected
-    response_string = (*response_)[http::field::location].to_string();
+    response_string =
+        header_value_to_string((*response_)[http::field::location]);
     if (response_string.empty()) {
       response_int = response_type_e::unknown_response;
     } else {
@@ -392,7 +399,8 @@ void https_request_handler_t::on_data_received(
   int content_length = 0;
   if (response_->has_content_length()) {
     try {
-      auto const cl_str = (*response_)[http::field::content_length].to_string();
+      auto const cl_str =
+          header_value_to_string((*response_)[http::field::content_length]);
       content_length = std::stoi(cl_str);
     } catch (std::exception const &) {
     }

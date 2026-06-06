@@ -2,6 +2,7 @@
 
 #include "dns/dns_resolver.hpp"
 #include "utils/io_utils.hpp"
+#include <ctime>
 #include <thread>
 
 // maximum sockets to open regardless of the number of threads
@@ -24,7 +25,10 @@ struct cli_args_t {
   int post_http_request{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
   bool include_date{false};
+  bool show_first_seen{false};
+  std::string last_seen_date{};
 };
 
 struct runtime_args_t {
@@ -36,6 +40,11 @@ struct runtime_args_t {
   http_process_e http_request_time_{};
   int thread_count{};
   int content_length{-1};
+  int last_seen_days{-1};
+  bool show_first_seen{false};
+  std::string last_seen_date{};
+  std::string scan_time{};
+  std::time_t scan_time_epoch{};
 };
 
 void run_program(cli_args_t const &cli_args);

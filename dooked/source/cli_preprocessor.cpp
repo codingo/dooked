@@ -4,10 +4,16 @@
 #include "utils/exceptions.hpp"
 #include "utils/random_utils.hpp"
 #include "utils/string_utils.hpp"
+#include <algorithm>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <cctype>
+#include <iomanip>
+#include <map>
 #include <set>
 #include <spdlog/spdlog.h>
+#include <sstream>
+#include <tuple>
 
 // defined (and assigned to) in main.cpp
 extern bool silent;
@@ -17,6 +23,204 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+using record_key_t = std::tuple<std::string, dns_record_type_e, std::string>;
+
+std::string lower_copy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return (char)std::tolower(c); });
+  return value;
+}
+
+record_key_t record_key(std::string const &domain, dns_record_type_e const type,
+                        std::string const &rdata) {
+  return {lower_copy(domain), type, lower_copy(rdata)};
+}
+
+std::string inherited_first_seen(json_data_t const &record,
+                                 std::string const &scan_time) {
+  if (!record.first_seen.empty()) {
+    return record.first_seen;
+  }
+  if (!record.last_seen.empty()) {
+    return record.last_seen;
+  }
+  return scan_time;
+}
+
+int next_seen_count(json_data_t const &record) {
+  if (record.seen > 0) {
+    return record.seen + 1;
+  }
+  return record.last_seen.empty() ? 1 : 2;
+}
+
+std::map<record_key_t, json_data_t>
+index_previous_records(std::optional<std::vector<json_data_t>> const &records) {
+  std::map<record_key_t, json_data_t> result;
+  if (!records) {
+    return result;
+  }
+  for (auto const &record : *records) {
+    result[record_key(record.domain_name, record.type, record.rdata)] = record;
+  }
+  return result;
+}
+
+std::set<record_key_t>
+apply_record_history(map_container_t<probe_result_t> &result_map,
+                     std::optional<std::vector<json_data_t>> const &records,
+                     std::string const &scan_time) {
+  auto const previous_index = index_previous_records(records);
+  std::set<record_key_t> current_keys;
+
+  for (auto &result_pair : result_map.result()) {
+    auto const &domain = result_pair.first;
+    for (auto &record : result_pair.second.dns_result_list_) {
+      auto const key = record_key(domain, record.type, record.rdata);
+      current_keys.insert(key);
+      record.currently_seen = true;
+
+      auto const previous_iter = previous_index.find(key);
+      if (previous_iter == previous_index.end()) {
+        record.first_seen = scan_time;
+        record.last_seen = scan_time;
+        record.seen = 1;
+        continue;
+      }
+
+      auto const &previous = previous_iter->second;
+      record.first_seen = inherited_first_seen(previous, scan_time);
+      record.last_seen = scan_time;
+      record.seen = next_seen_count(previous);
+    }
+  }
+  return current_keys;
+}
+
+void preserve_unseen_history(map_container_t<probe_result_t> &result_map,
+                             std::optional<std::vector<json_data_t>> const &records,
+                             std::set<record_key_t> const &current_keys) {
+  if (!records) {
+    return;
+  }
+
+  std::set<record_key_t> preserved_keys;
+  for (auto const &previous : *records) {
+    auto const key = record_key(previous.domain_name, previous.type,
+                                previous.rdata);
+    if (current_keys.find(key) != current_keys.end() ||
+        preserved_keys.find(key) != preserved_keys.end()) {
+      continue;
+    }
+
+    preserved_keys.insert(key);
+    probe_result_t stale_record{};
+    stale_record.rdata = previous.rdata;
+    stale_record.type = previous.type;
+    stale_record.ttl = (std::uint32_t)previous.ttl;
+    stale_record.first_seen = inherited_first_seen(previous, previous.last_seen);
+    stale_record.last_seen = previous.last_seen;
+    stale_record.seen = previous.seen;
+    stale_record.currently_seen = false;
+    result_map.result()[previous.domain_name].dns_result_list_.push_back(
+        std::move(stale_record));
+  }
+}
+
+std::vector<json_data_t>
+active_previous_records(std::vector<json_data_t> const &records) {
+  std::vector<json_data_t> active;
+  active.reserve(records.size());
+  std::copy_if(records.cbegin(), records.cend(), std::back_inserter(active),
+               [](auto const &record) { return record.currently_seen; });
+  return active;
+}
+
+std::time_t parse_time(std::string const &value, char const *format) {
+  std::tm parsed{};
+  parsed.tm_isdst = -1;
+  std::istringstream stream{value};
+  stream >> std::get_time(&parsed, format);
+  if (stream.fail()) {
+    return (std::time_t)-1;
+  }
+  return std::mktime(&parsed);
+}
+
+std::time_t parse_last_seen_time(std::string const &value) {
+  if (value.empty()) {
+    return (std::time_t)-1;
+  }
+  auto parsed = parse_time(value, "%Y-%m-%d %H:%M:%S");
+  if (parsed != (std::time_t)-1) {
+    return parsed;
+  }
+  parsed = parse_time(value, "%m/%d/%Y %H:%M:%S");
+  if (parsed != (std::time_t)-1) {
+    return parsed;
+  }
+  return parse_time(value, "%m/%d/%Y");
+}
+
+void report_last_seen_record(std::string const &domain,
+                             probe_result_t const &record) {
+  spdlog::warn("[LAST-SEEN][{}][{}] `{}` last seen `{}` (seen {} times)",
+               domain, dns_record_type_to_str(record.type), record.rdata,
+               record.last_seen, record.seen);
+}
+
+void report_history_alerts(map_container_t<probe_result_t> const &result_map,
+                           runtime_args_t const &rt_args) {
+  bool const needs_last_seen_days = rt_args.last_seen_days >= 0;
+  bool const needs_last_seen_date = !rt_args.last_seen_date.empty();
+  if (!rt_args.show_first_seen && !needs_last_seen_days &&
+      !needs_last_seen_date) {
+    return;
+  }
+
+  spdlog::set_pattern("[%^CHECK%$] %v");
+
+  std::time_t days_cutoff = (std::time_t)-1;
+  if (needs_last_seen_days) {
+    auto const day_seconds = (std::time_t)rt_args.last_seen_days * 24 * 60 * 60;
+    days_cutoff = rt_args.scan_time_epoch - day_seconds;
+  }
+
+  std::time_t date_cutoff = (std::time_t)-1;
+  if (needs_last_seen_date) {
+    date_cutoff = parse_last_seen_time(rt_args.last_seen_date);
+    if (date_cutoff == (std::time_t)-1) {
+      spdlog::error("unable to parse --lsd date `{}`", rt_args.last_seen_date);
+    }
+  }
+
+  for (auto const &result_pair : result_map.cresult()) {
+    auto const &domain = result_pair.first;
+    for (auto const &record : result_pair.second.dns_result_list_) {
+      if (rt_args.show_first_seen && record.currently_seen &&
+          record.seen == 1) {
+        spdlog::info("[FIRST-SEEN][{}][{}] `{}` first seen `{}`", domain,
+                     dns_record_type_to_str(record.type), record.rdata,
+                     record.first_seen);
+      }
+
+      if (record.currently_seen || record.last_seen.empty()) {
+        continue;
+      }
+
+      auto const record_time = parse_last_seen_time(record.last_seen);
+      if (record_time == (std::time_t)-1) {
+        continue;
+      }
+      if (needs_last_seen_days && record_time <= days_cutoff) {
+        report_last_seen_record(domain, record);
+      } else if (date_cutoff != (std::time_t)-1 &&
+                 record_time < date_cutoff) {
+        report_last_seen_record(domain, record);
+      }
+    }
+  }
+}
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -350,17 +554,16 @@ void start_name_checking(runtime_args_t &&rt_args) {
     }
     thread_pool->join();
   }
-  if (!silent) {
-    spdlog::info("Writing JSON output");
-  }
-  write_json_result(result_map, rt_args);
+  auto const current_keys =
+      apply_record_history(result_map, rt_args.previous_data, rt_args.scan_time);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
     auto &previous_data = *rt_args.previous_data;
+    auto active_previous_data = active_previous_records(previous_data);
 
     // sort the (domain)names in (alphabetical, record type) tuple order
-    std::sort(previous_data.begin(), previous_data.end(),
+    std::sort(active_previous_data.begin(), active_previous_data.end(),
               [](json_data_t const &a, json_data_t const &b) {
                 return std::tie(a.domain_name, a.type) <
                        std::tie(b.domain_name, b.type);
@@ -373,9 +576,15 @@ void start_name_checking(runtime_args_t &&rt_args) {
                   return std::tie(a.type, a.rdata) < std::tie(b.type, b.rdata);
                 });
     }
-    return compare_results(*rt_args.previous_data, result_map,
-                           rt_args.content_length);
+    compare_results(active_previous_data, result_map, rt_args.content_length);
+    preserve_unseen_history(result_map, rt_args.previous_data, current_keys);
   }
+
+  report_history_alerts(result_map, rt_args);
+  if (!silent) {
+    spdlog::info("Writing JSON output");
+  }
+  write_json_result(result_map, rt_args);
 }
 
 void run_program(cli_args_t const &cli_args) {
@@ -477,6 +686,14 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.last_seen_days = cli_args.last_seen_days;
+  rt_args.last_seen_date = cli_args.last_seen_date;
+  rt_args.show_first_seen = cli_args.show_first_seen;
+  rt_args.scan_time_epoch = std::time(nullptr);
+  if (!timet_to_string(rt_args.scan_time, rt_args.scan_time_epoch,
+                       "%Y-%m-%d %H:%M:%S")) {
+    rt_args.scan_time = "unknown";
+  }
   return start_name_checking(std::move(rt_args));
 }
 

@@ -39,3 +39,25 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### DNS history tracking
+
+When a previous JSON scan is passed back as input, dooked now carries DNS
+record history forward:
+
+- `first-seen`: first scan time for a domain/type/value tuple
+- `last-seen`: most recent scan time where that tuple was observed
+- `seen`: number of scans where that tuple was observed
+- `currently_seen`: whether the tuple appeared in the latest scan
+
+This keeps rotating DNS records in the output after they disappear from the
+latest scan, so load-balanced targets can be reviewed without losing older
+addresses immediately.
+
+Additional comparison flags:
+
+- `--fs`: report records first seen in the current scan
+- `--ls N`: report records missing from the current scan that have not been
+  seen in at least `N` days
+- `--lsd MM/DD/YYYY`: report missing records last seen before a US-formatted
+  date. `MM/DD/YYYY HH:MM:SS` is also accepted.

@@ -8,13 +8,29 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
+#include <cstdint>
+#include <type_traits>
 
 namespace dooked {
 
 using json = nlohmann::json;
 template <typename T> using opt_list_t = std::optional<std::vector<T>>;
 
+template <typename T, typename = void>
+struct has_tracking_fields : std::false_type {};
+
+template <typename T>
+struct has_tracking_fields<T, std::void_t<
+    decltype(std::declval<T>().first_seen),
+    decltype(std::declval<T>().last_seen),
+    decltype(std::declval<T>().seen_count)
+>> : std::true_type {};
+
+template <typename T>
+inline constexpr bool has_tracking_fields_v = has_tracking_fields<T>::value;
+
 void to_json(json &j, probe_result_t const &record);
+void from_json(json const &j, probe_result_t &record);
 dns_record_type_e dns_str_to_record_type(std::string const &);
 bool is_text_file(std::string const &file_extension);
 bool is_json_file(std::string const &file_extension);
@@ -26,9 +42,12 @@ void trim(std::string &);
 struct json_data_t {
   std::string domain_name{};
   std::string rdata{};
+  std::uint64_t first_seen{};
+  std::uint64_t last_seen{};
   int ttl{};
   int http_code{};
   int content_length{};
+  std::uint32_t seen_count{};
   dns_record_type_e type{};
 
   static json_data_t serialize(std::string const &d, int const len,
@@ -42,6 +61,18 @@ struct json_data_t {
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
     data.content_length = len;
     data.http_code = http_code;
+    auto const it_fs = json_object.find("first-seen");
+    if (it_fs != json_object.end() && it_fs->second.is_number()) {
+      data.first_seen = it_fs->second.get<std::uint64_t>();
+    }
+    auto const it_ls = json_object.find("last-seen");
+    if (it_ls != json_object.end() && it_ls->second.is_number()) {
+      data.last_seen = it_ls->second.get<std::uint64_t>();
+    }
+    auto const it_sc = json_object.find("seen");
+    if (it_sc != json_object.end() && it_sc->second.is_number()) {
+      data.seen_count = it_sc->second.get<std::uint32_t>();
+    }
     return data;
   }
 };

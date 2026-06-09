@@ -6,6 +6,22 @@ void to_json(json &j, probe_result_t const &record) {
   j = json{{"ttl", record.ttl},
            {"type", dns_record_type_to_str(record.type)},
            {"info", record.rdata}};
+  if constexpr (has_tracking_fields_v<probe_result_t>) {
+    j["first-seen"] = record.first_seen;
+    j["last-seen"] = record.last_seen;
+    j["seen"] = record.seen_count;
+  }
+}
+
+void from_json(json const &j, probe_result_t &record) {
+  record.ttl = j.value("ttl", std::uint32_t{0});
+  record.type = dns_str_to_record_type(j.value("type", std::string{}));
+  record.rdata = j.value("info", std::string{});
+  if constexpr (has_tracking_fields_v<probe_result_t>) {
+    record.first_seen = j.value("first-seen", std::uint64_t{0});
+    record.last_seen = j.value("last-seen", std::uint64_t{0});
+    record.seen_count = j.value("seen", std::uint32_t{0});
+  }
 }
 
 bool is_text_file(std::string const &file_extension) {

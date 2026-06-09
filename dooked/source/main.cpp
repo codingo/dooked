@@ -9,6 +9,8 @@
 bool no_bytes_count = false;
 bool silent = false;
 bool compare_cl = false;
+bool flag_first_seen = false;
+bool flag_last_seen = false;
 
 int main(int argc, char **argv) {
   CLI::App app{"dooked -- a CLI tool to enumerate DNS info"};
@@ -47,6 +49,10 @@ int main(int argc, char **argv) {
                "program returns 0 as the content-length as opposed the total"
                "bytes returned from the call to I/O socket read");
   app.add_flag("--silent", silent, "do not show any DNS or HTTP info");
+  app.add_flag("--fs", flag_first_seen,
+               "show only first-seen (new) DNS records; suppresses last-seen");
+  app.add_flag("--ls", flag_last_seen,
+               "show only last-seen (missing/removed) DNS records; suppresses first-seen");
 
   CLI11_PARSE(app, argc, argv);
 

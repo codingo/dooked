@@ -45,9 +45,17 @@ template <typename ValueType> class map_container_t {
 
   void append_impl(std::string const &key, ValueType const &value) {
     auto &container = map_[key].dns_result_list_;
-    auto iter = std::find(container.cbegin(), container.cend(), value);
-    if (iter == container.cend()) {
-      container.push_back(value);
+    auto iter = std::find(container.begin(), container.end(), value);
+    if (iter != container.end()) {
+      iter->last_seen = ValueType::now_epoch();
+      ++iter->seen_count;
+    } else {
+      auto rec = value;
+      auto const ts = ValueType::now_epoch();
+      rec.first_seen = ts;
+      rec.last_seen = ts;
+      rec.seen_count = 1;
+      container.push_back(std::move(rec));
     }
   }
 

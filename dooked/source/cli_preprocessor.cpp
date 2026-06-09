@@ -12,6 +12,8 @@
 // defined (and assigned to) in main.cpp
 extern bool silent;
 extern bool compare_cl;
+extern bool flag_first_seen;
+extern bool flag_last_seen;
 
 namespace dooked {
 
@@ -74,9 +76,12 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                    case_insensitive_compare(a.rdata, b.rdata);
           });
       if (!found) {
-        spdlog::error("[MISSING][{}][{}] `{}`", iter->domain_name,
-                      dns_record_type_to_str(start_iter->type),
-                      start_iter->rdata);
+        bool const any_filter = flag_first_seen || flag_last_seen;
+        if (!any_filter || flag_last_seen) {
+          spdlog::error("[MISSING][{}][{}] `{}`", iter->domain_name,
+                        dns_record_type_to_str(start_iter->type),
+                        start_iter->rdata);
+        }
       }
     }
     // information may have been changed
@@ -98,9 +103,12 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
       if (find_iter == eq_range.second) {
         auto const distance = std::distance(eq_range.first, eq_range.second);
         if (distance == 0) {
-          spdlog::error("[REMOVED][{}][{}] `{}`", iter->domain_name,
-                        dns_record_type_to_str(start_iter->type),
-                        start_iter->rdata);
+          bool const any_filter = flag_first_seen || flag_last_seen;
+          if (!any_filter || flag_last_seen) {
+            spdlog::error("[REMOVED][{}][{}] `{}`", iter->domain_name,
+                          dns_record_type_to_str(start_iter->type),
+                          start_iter->rdata);
+          }
         } else if (distance == 1) {
           spdlog::info("[CHANGED][{}][{}] from `{}` to `{}`", iter->domain_name,
                        dns_record_type_to_str(start_iter->type),
@@ -108,11 +116,14 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
         } else {
           if (record_type != iter->type) {
             record_type = iter->type;
-            for (auto current_range = eq_range.first;
-                 current_range != eq_range.second; ++current_range) {
-              spdlog::info("[NEW][{}][{}] `{}`", iter->domain_name,
-                           dns_record_type_to_str(current_range->type),
-                           current_range->rdata);
+            bool const any_filter = flag_first_seen || flag_last_seen;
+            if (!any_filter || flag_first_seen) {
+              for (auto current_range = eq_range.first;
+                   current_range != eq_range.second; ++current_range) {
+                spdlog::info("[NEW][{}][{}] `{}`", iter->domain_name,
+                             dns_record_type_to_str(current_range->type),
+                             current_range->rdata);
+              }
             }
           }
         }
@@ -127,9 +138,12 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                    case_insensitive_compare(a.rdata, b.rdata);
           });
       if (!found) {
-        spdlog::info("[NEW][{}][{}] `{}`", iter->domain_name,
-                     dns_record_type_to_str(current_elem.type),
-                     current_elem.rdata);
+        bool const any_filter = flag_first_seen || flag_last_seen;
+        if (!any_filter || flag_first_seen) {
+          spdlog::info("[NEW][{}][{}] `{}`", iter->domain_name,
+                       dns_record_type_to_str(current_elem.type),
+                       current_elem.rdata);
+        }
       }
     }
   }
@@ -288,6 +302,26 @@ bool read_input_file(cli_args_t const &cli_args, runtime_args_t &rt_args) {
   return false;
 }
 
+void merge_tracking_fields(map_container_t<probe_result_t> &result_map,
+                           std::vector<json_data_t> const &previous_data) {
+  for (auto &[domain, response] : result_map.result()) {
+    for (auto &record : response.dns_result_list_) {
+      for (auto const &prev : previous_data) {
+        if (prev.domain_name == domain && prev.type == record.type &&
+            case_insensitive_compare(prev.rdata, record.rdata)) {
+          if (prev.first_seen != 0) {
+            record.first_seen = prev.first_seen;
+          }
+          if (prev.seen_count != 0) {
+            record.seen_count += prev.seen_count;
+          }
+          break;
+        }
+      }
+    }
+  }
+}
+
 void start_name_checking(runtime_args_t &&rt_args) {
   std::size_t const user_specified_thread =
       (rt_args.thread_count > 0) ? (std::size_t)rt_args.thread_count
@@ -349,6 +383,9 @@ void start_name_checking(runtime_args_t &&rt_args) {
       });
     }
     thread_pool->join();
+  }
+  if (rt_args.previous_data) {
+    merge_tracking_fields(result_map, *rt_args.previous_data);
   }
   if (!silent) {
     spdlog::info("Writing JSON output");

@@ -41,6 +41,12 @@ int main(int argc, char **argv) {
       "defers http request until after all DNS requests have been completed");
   app.add_flag("--compare-cl", compare_cl,
                "compare content-length of HTTP requests");
+  app.add_flag("--fs", cli_args.show_first_seen,
+               "show DNS records first seen in this run");
+  app.add_option("--ls", cli_args.last_seen_days,
+                 "show DNS records not seen for at least N days");
+  app.add_option("--lsd", cli_args.last_seen_date,
+                 "show DNS records not seen since MM/DD/YYYY");
 
   app.add_flag("--nbc", no_bytes_count,
                "in case `content-length` is missing in an HTTP header field,"

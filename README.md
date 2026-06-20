@@ -39,3 +39,20 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### History fields
+
+When a previous JSON result is used as input, dooked now preserves DNS records
+that are no longer visible in the current run and stores:
+
+- `first-seen`: the first date the DNS record was observed
+- `last-seen`: the most recent date the DNS record was observed
+- `seen`: how many runs have observed the record
+
+Additional history prompts are available:
+
+- `--fs`: print records first seen in the current run
+- `--ls <days>`: print records not seen in the current run and not seen within
+  the requested number of days
+- `--lsd <MM/DD/YYYY>`: print records not seen in the current run and not seen
+  since the requested date

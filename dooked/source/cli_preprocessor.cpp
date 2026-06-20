@@ -4,9 +4,15 @@
 #include "utils/exceptions.hpp"
 #include "utils/random_utils.hpp"
 #include "utils/string_utils.hpp"
+#include <algorithm>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/thread_pool.hpp>
+#include <cctype>
+#include <ctime>
+#include <iomanip>
+#include <map>
 #include <set>
+#include <sstream>
 #include <spdlog/spdlog.h>
 
 // defined (and assigned to) in main.cpp
@@ -17,6 +23,140 @@ namespace dooked {
 
 namespace net = boost::asio;
 using namespace fmt::v7::literals;
+
+std::string lower_copy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) { return (char)std::tolower(ch); });
+  return value;
+}
+
+std::string history_key(std::string const &domain_name,
+                        dns_record_type_e const type,
+                        std::string const &rdata) {
+  return lower_copy(domain_name) + "\n" + std::to_string((int)type) + "\n" +
+         lower_copy(rdata);
+}
+
+std::string history_key(json_data_t const &record) {
+  return history_key(record.domain_name, record.type, record.rdata);
+}
+
+std::string history_key(std::string const &domain_name,
+                        probe_result_t const &record) {
+  return history_key(domain_name, record.type, record.rdata);
+}
+
+std::map<std::string, json_data_t>
+build_history_lookup(std::optional<std::vector<json_data_t>> const &history) {
+  std::map<std::string, json_data_t> lookup;
+  if (!history) {
+    return lookup;
+  }
+  for (auto const &record : *history) {
+    lookup[history_key(record)] = record;
+  }
+  return lookup;
+}
+
+std::set<std::string>
+build_current_keys(map_container_t<probe_result_t> const &current_result) {
+  std::set<std::string> keys;
+  for (auto const &result_pair : current_result.cresult()) {
+    for (auto const &record : result_pair.second.dns_result_list_) {
+      keys.insert(history_key(result_pair.first, record));
+    }
+  }
+  return keys;
+}
+
+bool parse_date(std::string const &input, char const *format,
+                std::time_t &output) {
+  std::tm tm{};
+  std::istringstream ss(input);
+  ss >> std::get_time(&tm, format);
+  if (ss.fail()) {
+    return false;
+  }
+  tm.tm_hour = 0;
+  tm.tm_min = 0;
+  tm.tm_sec = 0;
+  output = std::mktime(&tm);
+  return output != (std::time_t)-1;
+}
+
+bool parse_date(std::string const &input, std::time_t &output) {
+  return parse_date(input, "%Y-%m-%d", output) ||
+         parse_date(input, "%m/%d/%Y", output) ||
+         parse_date(input, "%m-%d-%Y", output);
+}
+
+bool older_than_days(std::string const &last_seen, int const days,
+                     std::time_t const now) {
+  if (days < 0) {
+    return false;
+  }
+  std::time_t last_seen_time{};
+  if (!parse_date(last_seen, last_seen_time)) {
+    return true;
+  }
+  double const seconds = std::difftime(now, last_seen_time);
+  return seconds >= static_cast<double>(days) * 24 * 60 * 60;
+}
+
+bool older_than_date(std::string const &last_seen, std::string const &date) {
+  if (date.empty()) {
+    return false;
+  }
+  std::time_t last_seen_time{};
+  std::time_t cutoff_time{};
+  if (!parse_date(last_seen, last_seen_time) || !parse_date(date, cutoff_time)) {
+    return true;
+  }
+  return last_seen_time < cutoff_time;
+}
+
+void report_history_flags(runtime_args_t const &rt_args,
+                          map_container_t<probe_result_t> const &current_result) {
+  auto const previous_lookup = build_history_lookup(rt_args.previous_data);
+
+  if (rt_args.show_first_seen) {
+    for (auto const &result_pair : current_result.cresult()) {
+      for (auto const &record : result_pair.second.dns_result_list_) {
+        auto const key = history_key(result_pair.first, record);
+        if (previous_lookup.find(key) == previous_lookup.end()) {
+          spdlog::info("[FIRST-SEEN][{}][{}] `{}`", result_pair.first,
+                       dns_record_type_to_str(record.type), record.rdata);
+        }
+      }
+    }
+  }
+
+  if (rt_args.last_seen_days < 0 && rt_args.last_seen_date.empty()) {
+    return;
+  }
+
+  if (!rt_args.previous_data) {
+    return;
+  }
+
+  auto const current_keys = build_current_keys(current_result);
+  auto const now = std::time(nullptr);
+  for (auto const &record : *rt_args.previous_data) {
+    if (current_keys.find(history_key(record)) != current_keys.end()) {
+      continue;
+    }
+    bool const older_than_requested_days =
+        older_than_days(record.last_seen, rt_args.last_seen_days, now);
+    bool const older_than_requested_date =
+        older_than_date(record.last_seen, rt_args.last_seen_date);
+    if (older_than_requested_days || older_than_requested_date) {
+      spdlog::info("[LAST-SEEN][{}][{}] `{}` last seen `{}`",
+                   record.domain_name, dns_record_type_to_str(record.type),
+                   record.rdata,
+                   record.last_seen.empty() ? "unknown" : record.last_seen);
+    }
+  }
+}
 
 void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
                          http_response_t const &current_result) {
@@ -354,6 +494,7 @@ void start_name_checking(runtime_args_t &&rt_args) {
     spdlog::info("Writing JSON output");
   }
   write_json_result(result_map, rt_args);
+  report_history_flags(rt_args, result_map);
 
   // compare old with new result -- only if we had previous record
   if (rt_args.previous_data) {
@@ -477,6 +618,12 @@ void run_program(cli_args_t const &cli_args) {
       static_cast<http_process_e>(cli_args.post_http_request);
   rt_args.thread_count = cli_args.thread_count;
   rt_args.content_length = cli_args.content_length;
+  rt_args.show_first_seen = cli_args.show_first_seen;
+  rt_args.last_seen_days = cli_args.last_seen_days;
+  rt_args.last_seen_date = cli_args.last_seen_date;
+  if (!timet_to_string(rt_args.scan_date, std::time(nullptr), "%Y-%m-%d")) {
+    rt_args.scan_date = {};
+  }
   return start_name_checking(std::move(rt_args));
 }
 
@@ -492,14 +639,14 @@ void report_error(char const *format, int const value, bool const boolean_value,
 
 void print_banner() {
   auto const header = R"sep("
-·▄▄▄▄              ▄ •▄ ▄▄▄ .·▄▄▄▄  
-██▪ ██ ▪     ▪     █▌▄▌▪▀▄.▀·██▪ ██ 
+·▄▄▄▄              ▄ •▄ ▄▄▄ .·▄▄▄▄
+██▪ ██ ▪     ▪     █▌▄▌▪▀▄.▀·██▪ ██
 ▐█· ▐█▌ ▄█▀▄  ▄█▀▄ ▐▀▀▄·▐▀▀▪▄▐█· ▐█▌
-██. ██ ▐█▌.▐▌▐█▌.▐▌▐█.█▌▐█▄▄▌██. ██ 
-▀▀▀▀▀•  ▀█▄▀▪ ▀█▄▀▪·▀  ▀ ▀▀▀ ▀▀▀▀▀• 
+██. ██ ▐█▌.▐▌▐█▌.▐▌▐█.█▌▐█▄▄▌██. ██
+▀▀▀▀▀•  ▀█▄▀▪ ▀█▄▀▪·▀  ▀ ▀▀▀ ▀▀▀▀▀•
 
 DNS and Target History Local Storage
-Made with ❥ by codingo (https://twitter.com/codingo_)   
+Made with ❥ by codingo (https://twitter.com/codingo_)
 )sep";
   fprintf(stdout, "%s", header);
 }

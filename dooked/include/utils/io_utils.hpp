@@ -2,12 +2,18 @@
 
 #include "utils/containers.hpp"
 #include "utils/probe_result.hpp"
+#include <algorithm>
+#include <cctype>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <set>
 #include <sstream>
+#include <tuple>
 
 namespace dooked {
 
@@ -20,12 +26,17 @@ bool is_text_file(std::string const &file_extension);
 bool is_json_file(std::string const &file_extension);
 std::string get_file_type(std::filesystem::path const &file_path);
 std::string get_filepath(std::string const &filename);
+std::string current_us_datetime();
 std::uint16_t uint16_value(unsigned char const *buff);
 void trim(std::string &);
 
 struct json_data_t {
   std::string domain_name{};
   std::string rdata{};
+  std::string first_seen{};
+  std::string last_seen{};
+  int seen{};
+  bool currently_seen{true};
   int ttl{};
   int http_code{};
   int content_length{};
@@ -39,9 +50,46 @@ struct json_data_t {
     data.type =
         dns_str_to_record_type(json_object["type"].get<json::string_t>());
     data.rdata = json_object["info"].get<json::string_t>();
-    data.ttl = json_object["ttl"].get<json::number_integer_t>();
+    data.ttl =
+        static_cast<int>(json_object["ttl"].get<json::number_integer_t>());
     data.content_length = len;
     data.http_code = http_code;
+
+    auto const read_optional_string = [&json_object](char const *key) {
+      auto const iter = json_object.find(key);
+      if (iter != json_object.cend() && iter->second.is_string()) {
+        return iter->second.get<json::string_t>();
+      }
+      return std::string{};
+    };
+    auto const read_optional_int = [&json_object](char const *key) {
+      auto const iter = json_object.find(key);
+      if (iter != json_object.cend() && iter->second.is_number_integer()) {
+        return iter->second.get<json::number_integer_t>();
+      }
+      return json::number_integer_t{};
+    };
+    auto const read_optional_bool = [&json_object](char const *key,
+                                                   bool const fallback) {
+      auto const iter = json_object.find(key);
+      if (iter != json_object.cend() && iter->second.is_boolean()) {
+        return iter->second.get<json::boolean_t>();
+      }
+      return fallback;
+    };
+
+    data.first_seen = read_optional_string("first-seen");
+    if (data.first_seen.empty()) {
+      data.first_seen = read_optional_string("first_seen");
+    }
+    data.last_seen = read_optional_string("last-seen");
+    if (data.last_seen.empty()) {
+      data.last_seen = read_optional_string("last_seen");
+    }
+    data.seen = static_cast<int>(read_optional_int("seen"));
+    data.currently_seen = read_optional_bool("currently-seen", true);
+    data.currently_seen = read_optional_bool("currently_seen",
+                                             data.currently_seen);
     return data;
   }
 };
@@ -53,6 +101,104 @@ struct jd_domain_comparator_t {
 };
 
 namespace detail {
+
+using json_record_key_t = std::tuple<std::string, dns_record_type_e, std::string>;
+using previous_record_index_t = std::map<json_record_key_t, json_data_t>;
+using previous_record_group_t = std::map<std::string, std::vector<json_data_t>>;
+
+inline std::string lowercase_copy(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return value;
+}
+
+inline json_record_key_t make_json_record_key(std::string domain_name,
+                                              dns_record_type_e const type,
+                                              std::string rdata) {
+  return {lowercase_copy(std::move(domain_name)), type,
+          lowercase_copy(std::move(rdata))};
+}
+
+inline previous_record_index_t make_previous_record_index(
+    std::optional<std::vector<json_data_t>> const &previous_data) {
+  previous_record_index_t index{};
+  if (!previous_data) {
+    return index;
+  }
+  for (auto const &record : *previous_data) {
+    index[make_json_record_key(record.domain_name, record.type, record.rdata)] =
+        record;
+  }
+  return index;
+}
+
+inline previous_record_group_t make_previous_record_groups(
+    std::optional<std::vector<json_data_t>> const &previous_data) {
+  previous_record_group_t groups{};
+  if (!previous_data) {
+    return groups;
+  }
+  for (auto const &record : *previous_data) {
+    groups[lowercase_copy(record.domain_name)].push_back(record);
+  }
+  return groups;
+}
+
+inline json::object_t make_historical_dns_record_json(
+    json_data_t const &previous_record, std::string const &current_datetime) {
+  json::object_t dns_object;
+  dns_object["ttl"] = previous_record.ttl;
+  dns_object["type"] = dns_record_type_to_str(previous_record.type);
+  dns_object["info"] = previous_record.rdata;
+
+  auto first_seen = previous_record.first_seen;
+  if (first_seen.empty()) {
+    first_seen = previous_record.last_seen.empty() ? current_datetime
+                                                   : previous_record.last_seen;
+  }
+  auto last_seen = previous_record.last_seen.empty() ? first_seen
+                                                     : previous_record.last_seen;
+  dns_object["first-seen"] = std::move(first_seen);
+  dns_object["last-seen"] = std::move(last_seen);
+  dns_object["seen"] = previous_record.seen > 0 ? previous_record.seen : 1;
+  dns_object["currently-seen"] = false;
+  return dns_object;
+}
+
+template <typename DnsType>
+json::object_t make_dns_record_json(
+    std::string const &domain_name, DnsType const &dns_record,
+    previous_record_index_t const &previous_record_index,
+    std::string const &current_datetime) {
+  json::object_t dns_object;
+  dns_object["ttl"] = dns_record.ttl;
+  dns_object["type"] = dns_record_type_to_str(dns_record.type);
+  dns_object["info"] = dns_record.rdata;
+
+  auto const key =
+      make_json_record_key(domain_name, dns_record.type, dns_record.rdata);
+  auto const previous_record_iter = previous_record_index.find(key);
+  if (previous_record_iter == previous_record_index.cend()) {
+    dns_object["first-seen"] = current_datetime;
+    dns_object["last-seen"] = current_datetime;
+    dns_object["seen"] = 1;
+    dns_object["currently-seen"] = true;
+    return dns_object;
+  }
+
+  auto const &previous_record = previous_record_iter->second;
+  auto first_seen = previous_record.first_seen;
+  if (first_seen.empty()) {
+    first_seen = previous_record.last_seen.empty() ? current_datetime
+                                                   : previous_record.last_seen;
+  }
+  dns_object["first-seen"] = std::move(first_seen);
+  dns_object["last-seen"] = current_datetime;
+  dns_object["seen"] = previous_record.seen > 0 ? previous_record.seen + 1 : 2;
+  dns_object["currently-seen"] = true;
+  return dns_object;
+}
 
 template <typename DnsType, typename RtType>
 void write_json_result_impl(map_container_t<DnsType> const &result_map,
@@ -67,16 +213,73 @@ void write_json_result_impl(map_container_t<DnsType> const &result_map,
   }
 
   json::array_t list;
+  auto const previous_record_index =
+      make_previous_record_index(rt_args.previous_data);
+  auto const previous_record_groups =
+      make_previous_record_groups(rt_args.previous_data);
+  auto const current_datetime = current_us_datetime();
+  std::set<std::string> output_domain_keys;
   for (auto const &result_pair : result_map.cresult()) {
     json::object_t internal_object;
     auto &http_result = result_pair.second.http_result_;
-    internal_object["dns_probe"] = result_pair.second.dns_result_list_;
+    json::array_t dns_probe_list;
+    std::set<json_record_key_t> current_record_keys;
+    for (auto const &dns_record : result_pair.second.dns_result_list_) {
+      current_record_keys.insert(make_json_record_key(
+          result_pair.first, dns_record.type, dns_record.rdata));
+      dns_probe_list.push_back(make_dns_record_json(
+          result_pair.first, dns_record, previous_record_index, current_datetime));
+    }
+
+    auto const domain_key = lowercase_copy(result_pair.first);
+    output_domain_keys.insert(domain_key);
+    auto const previous_group_iter = previous_record_groups.find(domain_key);
+    if (previous_group_iter != previous_record_groups.cend()) {
+      for (auto const &previous_record : previous_group_iter->second) {
+        auto const record_key = make_json_record_key(
+            previous_record.domain_name, previous_record.type, previous_record.rdata);
+        if (current_record_keys.find(record_key) != current_record_keys.cend()) {
+          continue;
+        }
+        dns_probe_list.push_back(
+            make_historical_dns_record_json(previous_record, current_datetime));
+      }
+    }
+    internal_object["dns_probe"] = std::move(dns_probe_list);
     internal_object["content_length"] = http_result.content_length_;
     internal_object["http_code"] = http_result.http_status_;
     internal_object["code_string"] = code_string(http_result.http_status_);
 
     json::object_t object;
     object[result_pair.first] = internal_object;
+    list.push_back(std::move(object));
+  }
+
+  for (auto const &previous_group_pair : previous_record_groups) {
+    if (output_domain_keys.find(previous_group_pair.first) !=
+        output_domain_keys.cend()) {
+      continue;
+    }
+    auto const &records = previous_group_pair.second;
+    if (records.empty()) {
+      continue;
+    }
+
+    json::array_t dns_probe_list;
+    for (auto const &previous_record : records) {
+      dns_probe_list.push_back(
+          make_historical_dns_record_json(previous_record, current_datetime));
+    }
+
+    auto const &first_record = records.front();
+    json::object_t internal_object;
+    internal_object["dns_probe"] = std::move(dns_probe_list);
+    internal_object["content_length"] = first_record.content_length;
+    internal_object["http_code"] = first_record.http_code;
+    internal_object["code_string"] = code_string(first_record.http_code);
+
+    json::object_t object;
+    object[first_record.domain_name] = std::move(internal_object);
     list.push_back(std::move(object));
   }
   json::object_t res_object;
@@ -106,10 +309,10 @@ std::optional<std::vector<T>> read_json_string(Iterator const begin,
         auto internal_object = json_item.second.get<json::object_t>();
         auto const domain_detail_list =
             internal_object["dns_probe"].get<json::array_t>();
-        auto const content_length =
-            internal_object["content_length"].get<json::number_integer_t>();
-        auto const http_code =
-            internal_object["http_code"].get<json::number_integer_t>();
+        auto const content_length = static_cast<int>(
+            internal_object["content_length"].get<json::number_integer_t>());
+        auto const http_code = static_cast<int>(
+            internal_object["http_code"].get<json::number_integer_t>());
 
         for (auto const &domain_detail : domain_detail_list) {
           auto domain_object = domain_detail.get<json::object_t>();

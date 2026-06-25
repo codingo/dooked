@@ -51,4 +51,26 @@ std::string get_filepath(std::string const &filename) {
   return std::filesystem::path(filename).replace_extension().string();
 }
 
+std::string current_us_datetime() {
+  auto const current_time = std::time(nullptr);
+#if _MSC_VER && !__INTEL_COMPILER
+#pragma warning(disable : 4996)
+#endif
+  auto const local_time = std::localtime(&current_time);
+  if (!local_time) {
+    return {};
+  }
+
+  std::string output;
+  output.resize(32);
+  auto const trimmed_size =
+      std::strftime(output.data(), output.size(), "%m/%d/%Y %H:%M:%S",
+                    local_time);
+  if (trimmed_size == 0) {
+    return {};
+  }
+  output.resize(trimmed_size);
+  return output;
+}
+
 } // namespace dooked

@@ -43,13 +43,13 @@ endif(NOT CMAKE_BUILD_TYPE)
 ############################################################
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_DEBUG}")
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_DEBUG}")
-  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_DEBUG}")
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_DEBUG}")
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_DEBUG}")
+  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${OUTPUT_DEBUG}")
 else()
-  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_RELEASE}")
-  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_RELEASE}")
-  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${PROJECT_DIR}/${OUTPUT_RELEASE}")
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${OUTPUT_RELEASE}")
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${OUTPUT_RELEASE}")
+  set(CMAKE_EXECUTABLE_OUTPUT_DIRECTORY "${OUTPUT_RELEASE}")
 endif()
 
 # Messages
@@ -102,6 +102,25 @@ source_group("Headers" FILES ${HEADERS_FILES})
 add_executable(${PROJECT_NAME} 
    ${SRC_FILES} ${HEADERS_FILES}
 )
+
+option(DOOKED_BUILD_HISTORY_TESTS "Build DNS history metadata regression tests" OFF)
+
+if(DOOKED_BUILD_HISTORY_TESTS)
+  enable_testing()
+  add_executable(dooked_dns_history_test
+    ./tests/dns_history_test.cpp
+    ./source/utils/constants.cpp
+    ./source/utils/io_utils.cpp
+    ./source/utils/string_utils.cpp
+  )
+  set_target_properties(dooked_dns_history_test PROPERTIES LINK_LIBRARIES "")
+  target_compile_features(dooked_dns_history_test PRIVATE cxx_std_17)
+  target_include_directories(dooked_dns_history_test PRIVATE
+    ${PROJECT_DIR}/include
+    ${PROJECT_DIR}/json/single_include
+  )
+  add_test(NAME dooked_dns_history_test COMMAND dooked_dns_history_test)
+endif()
 
 if(NOT MSVC)
    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -O3")

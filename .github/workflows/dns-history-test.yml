@@ -1,0 +1,31 @@
+name: DNS history regression test
+
+on:
+  pull_request:
+    paths:
+      - "dooked/**"
+      - ".github/workflows/dns-history-test.yml"
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  dns-history-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure isolated history test
+        run: >
+          cmake -S dooked -B build
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+          -DDOOKED_BUILD_HISTORY_TESTS=ON
+
+      - name: Build isolated history test
+        run: cmake --build build --target dooked_dns_history_test --config Release
+
+      - name: Run isolated history test
+        run: ctest --test-dir build --output-on-failure

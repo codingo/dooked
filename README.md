@@ -39,3 +39,31 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### DNS history metadata
+
+When a previous JSON result is used as input, dooked preserves DNS record
+history in each `dns_probe` item:
+
+- `first-seen`: when this DNS record was first observed.
+- `last-seen`: when this DNS record was most recently observed.
+- `seen`: how many runs have observed this DNS record.
+- `currently-seen`: whether this DNS record was present in the latest run.
+
+Historical records that are missing from the latest DNS response are kept in
+the JSON output with `currently-seen: false`. This keeps load-balanced or
+rotating records searchable without making the default comparison repeatedly
+report old historical records as newly missing.
+
+Useful flags:
+
+```
+dooked -i previous.json --fs
+dooked -i previous.json --ls 2
+dooked -i previous.json --lsd "03/15/2021"
+```
+
+- `--fs` / `--first-seen`: print records first observed in the current run.
+- `--ls` / `--last-seen N`: print missing records last seen at least `N` days ago.
+- `--lsd` / `--last-seen-date`: print missing records last seen before a US
+  date or datetime, for example `03/15/2021` or `03/15/2021 14:30:00`.

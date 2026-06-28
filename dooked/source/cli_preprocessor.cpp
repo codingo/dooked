@@ -53,16 +53,30 @@ std::optional<std::time_t> days_before_now(int const days) {
   return std::time(nullptr) - (static_cast<std::time_t>(days) * 24 * 60 * 60);
 }
 
-bool same_dns_record(json_data_t const &previous, probe_result_t const &current) {
+bool records_match(json_data_t const &previous, probe_result_t const &current) {
   return previous.type == current.type &&
          case_insensitive_compare(previous.rdata, current.rdata);
 }
 
-bool same_dns_record(json_data_t const &previous,
-                     std::string const &domain_name,
-                     probe_result_t const &current) {
+bool records_match(json_data_t const &previous,
+                   std::string const &domain_name,
+                   probe_result_t const &current) {
   return case_insensitive_compare(previous.domain_name, domain_name) &&
-         same_dns_record(previous, current);
+         records_match(previous, current);
+}
+
+bool history_record_less(json_data_t const &a, json_data_t const &b) {
+  return std::tie(a.domain_name, a.type, a.rdata) <
+         std::tie(b.domain_name, b.type, b.rdata);
+}
+
+bool probe_record_less(probe_result_t const &a, probe_result_t const &b) {
+  return std::tie(a.type, a.rdata) < std::tie(b.type, b.rdata);
+}
+
+void sort_domain_records(http_dns_response_t<probe_result_t> &domain_result) {
+  std::sort(domain_result.dns_result_list_.begin(),
+            domain_result.dns_result_list_.end(), probe_record_less);
 }
 
 std::string first_seen_or_today(json_data_t const &record,
@@ -110,7 +124,7 @@ void report_history_changes(
     for (auto const &current_record : current_records) {
       auto const previous_iter =
           std::find_if(previous_begin, previous_end, [&](auto const &previous) {
-            return same_dns_record(previous, current_record);
+            return records_match(previous, current_record);
           });
       if (previous_iter == previous_end) {
         spdlog::info("[FIRST-SEEN][{}][{}] `{}` first seen {}", domain_name,
@@ -124,7 +138,7 @@ void report_history_changes(
     auto const current_iter =
         std::find_if(current_records.cbegin(), current_records.cend(),
                      [&](auto const &current) {
-                       return same_dns_record(*iter, current);
+                       return records_match(*iter, current);
                      });
     if (current_iter == current_records.cend() &&
         should_report_last_seen(*iter, rt_args)) {
@@ -145,8 +159,8 @@ void apply_history_metadata(std::optional<std::vector<json_data_t>> const &previ
         auto const previous_iter =
             std::find_if(previous->cbegin(), previous->cend(),
                          [&](auto const &previous_record) {
-                           return same_dns_record(previous_record, domain_name,
-                                                  record);
+                           return records_match(previous_record, domain_name,
+                                                record);
                          });
         if (previous_iter != previous->cend()) {
           record.first_seen = first_seen_or_today(*previous_iter, today);
@@ -174,7 +188,7 @@ void apply_history_metadata(std::optional<std::vector<json_data_t>> const &previ
         std::find_if(current_domain_iter->second.dns_result_list_.cbegin(),
                      current_domain_iter->second.dns_result_list_.cend(),
                      [&](auto const &current_record) {
-                       return same_dns_record(previous_record, current_record);
+                       return records_match(previous_record, current_record);
                      }) != current_domain_iter->second.dns_result_list_.cend();
 
     if (found_current) {
@@ -195,6 +209,10 @@ void apply_history_metadata(std::optional<std::vector<json_data_t>> const &previ
     retained_record.seen_count =
         previous_record.seen_count > 0 ? previous_record.seen_count : 1;
     result_map.append(previous_record.domain_name, retained_record);
+  }
+
+  for (auto &[domain_name, domain_result] : current_data) {
+    sort_domain_records(domain_result);
   }
 }
 
@@ -249,12 +267,12 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
   // something is missing
   if (current_total_elem < previous_total_elem) {
     for (auto start_iter = iter; start_iter != last_elem_iter; ++start_iter) {
-      bool const found = std::binary_search(
-          current_domain_info_list.cbegin(), current_domain_info_list.cend(),
-          *start_iter, [](auto const &a, auto const &b) {
-            return a.type == b.type &&
-                   case_insensitive_compare(a.rdata, b.rdata);
-          });
+      bool const found =
+          std::find_if(current_domain_info_list.cbegin(),
+                       current_domain_info_list.cend(),
+                       [&](auto const &current_record) {
+                         return records_match(*start_iter, current_record);
+                       }) != current_domain_info_list.cend();
       if (!found) {
         spdlog::error("[MISSING][{}][{}] `{}`", iter->domain_name,
                       dns_record_type_to_str(start_iter->type),
@@ -303,11 +321,10 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
   } else {
     // new information has been added
     for (auto const &current_elem : current_domain_info_list) {
-      bool const found = std::binary_search(
-          iter, last_elem_iter, current_elem, [](auto const &a, auto const &b) {
-            return a.type == b.type &&
-                   case_insensitive_compare(a.rdata, b.rdata);
-          });
+      bool const found =
+          std::find_if(iter, last_elem_iter, [&](auto const &previous_record) {
+            return records_match(previous_record, current_elem);
+          }) != last_elem_iter;
       if (!found) {
         spdlog::info("[NEW][{}][{}] `{}`", iter->domain_name,
                      dns_record_type_to_str(current_elem.type),
@@ -539,19 +556,11 @@ void start_name_checking(runtime_args_t &&rt_args) {
   if (rt_args.previous_data) {
     auto &previous_data = *rt_args.previous_data;
 
-    // sort the (domain)names in (alphabetical, record type) tuple order
-    std::sort(previous_data.begin(), previous_data.end(),
-              [](json_data_t const &a, json_data_t const &b) {
-                return std::tie(a.domain_name, a.type) <
-                       std::tie(b.domain_name, b.type);
-              });
+    // sort by the same fields used by record equality before grouping domains
+    std::sort(previous_data.begin(), previous_data.end(), history_record_less);
     auto &result = result_map.result();
     for (auto &res : result) {
-      std::sort(res.second.dns_result_list_.begin(),
-                res.second.dns_result_list_.end(),
-                [](auto const &a, auto const &b) {
-                  return std::tie(a.type, a.rdata) < std::tie(b.type, b.rdata);
-                });
+      sort_domain_records(res.second);
     }
     compare_results(*rt_args.previous_data, result_map, rt_args);
   }

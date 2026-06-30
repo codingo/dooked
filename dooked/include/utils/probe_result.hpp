@@ -12,6 +12,10 @@ struct probe_result_t {
   std::string rdata{};
   dns_record_type_e type{}; // RR TYPE (2 octets)
   std::uint32_t ttl{};      // time to live(4 octets)
+  std::string first_seen{};
+  std::string last_seen{};
+  int seen{};
+  bool currently_seen{true};
 
   friend bool operator==(probe_result_t const &a, probe_result_t const &b) {
     return case_insensitive_compare(a.rdata, b.rdata) && (a.type == b.type);

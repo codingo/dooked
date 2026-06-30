@@ -26,14 +26,46 @@ void trim(std::string &);
 struct json_data_t {
   std::string domain_name{};
   std::string rdata{};
+  std::string first_seen{};
+  std::string last_seen{};
   int ttl{};
   int http_code{};
   int content_length{};
+  int seen{};
+  bool currently_seen{true};
   dns_record_type_e type{};
 
   static json_data_t serialize(std::string const &d, int const len,
                                int const http_code,
                                json::object_t &json_object) {
+    auto const string_value = [&json_object](char const *first_key,
+                                             char const *second_key) {
+      auto first_iter = json_object.find(first_key);
+      if (first_iter != json_object.end() && first_iter->second.is_string()) {
+        return first_iter->second.get<json::string_t>();
+      }
+      auto second_iter = json_object.find(second_key);
+      if (second_iter != json_object.end() && second_iter->second.is_string()) {
+        return second_iter->second.get<json::string_t>();
+      }
+      return json::string_t{};
+    };
+    auto const int_value = [&json_object](char const *key, int const fallback) {
+      auto iter = json_object.find(key);
+      if (iter != json_object.end() && iter->second.is_number_integer()) {
+        return static_cast<int>(iter->second.get<json::number_integer_t>());
+      }
+      return fallback;
+    };
+    auto const bool_value = [&json_object](char const *key,
+                                           bool const fallback) {
+      auto iter = json_object.find(key);
+      if (iter != json_object.end() && iter->second.is_boolean()) {
+        return iter->second.get<json::boolean_t>();
+      }
+      return fallback;
+    };
+
     json_data_t data{};
     data.domain_name = d;
     data.type =
@@ -42,6 +74,10 @@ struct json_data_t {
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
     data.content_length = len;
     data.http_code = http_code;
+    data.first_seen = string_value("first-seen", "first_seen");
+    data.last_seen = string_value("last-seen", "last_seen");
+    data.seen = int_value("seen", data.last_seen.empty() ? 0 : 1);
+    data.currently_seen = bool_value("currently_seen", true);
     return data;
   }
 };
@@ -82,6 +118,7 @@ void write_json_result_impl(map_container_t<DnsType> const &result_map,
   json::object_t res_object;
 
   res_object["program"] = "dooked";
+  res_object["scanned_at"] = rt_args.scan_time;
   res_object["result"] = std::move(list);
   (*rt_args.output_file) << json(res_object).dump(2) << "\n";
   rt_args.output_file->close();

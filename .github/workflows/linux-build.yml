@@ -1,0 +1,39 @@
+name: Linux build and history tests
+
+on:
+  push:
+    branches: [verification/dooked-history, bounty/dns-history]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libboost-dev libssl-dev
+      - name: Build
+        run: |
+          cmake -S dooked -B build
+          cmake --build build --parallel 2
+      - name: CLI smoke check
+        run: ./build/dooked --help
+      - name: C++ history and JSON integration tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -I dooked/include -I dooked/json/single_include \
+            dooked/tests/history_test.cpp dooked/source/utils/io_utils.cpp \
+            dooked/source/utils/constants.cpp dooked/source/utils/string_utils.cpp \
+            -o build/history-tests
+          ./build/history-tests
+      - name: Real CLI regression against loopback DNS
+        run: python3 dooked/tests/cli_history_test.py build/dooked

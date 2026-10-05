@@ -25,6 +25,9 @@ struct cli_args_t {
   int thread_count{};
   int content_length{-1};
   bool include_date{false};
+  bool first_seen{false};
+  std::int64_t last_seen_days{-1};
+  std::string last_seen_date{};
 };
 
 struct runtime_args_t {
@@ -33,6 +36,9 @@ struct runtime_args_t {
   std::optional<std::vector<json_data_t>> previous_data{};
   std::unique_ptr<std::ofstream> output_file{};
   std::string output_filename{};
+  bool first_seen{false};
+  std::int64_t last_seen_days{-1};
+  std::int64_t last_seen_cutoff{-1};
   http_process_e http_request_time_{};
   int thread_count{};
   int content_length{-1};

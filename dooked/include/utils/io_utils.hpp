@@ -1,6 +1,8 @@
 #pragma once
 
 #include "utils/containers.hpp"
+#include "utils/history.hpp"
+#include <ctime>
 #include "utils/probe_result.hpp"
 #include <filesystem>
 #include <fstream>
@@ -8,6 +10,8 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <sstream>
+
+extern bool silent;
 
 namespace dooked {
 
@@ -30,6 +34,7 @@ struct json_data_t {
   int http_code{};
   int content_length{};
   dns_record_type_e type{};
+  json history_record{};
 
   static json_data_t serialize(std::string const &d, int const len,
                                int const http_code,
@@ -42,6 +47,7 @@ struct json_data_t {
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
     data.content_length = len;
     data.http_code = http_code;
+    data.history_record = json_object;
     return data;
   }
 };
@@ -57,15 +63,6 @@ namespace detail {
 template <typename DnsType, typename RtType>
 void write_json_result_impl(map_container_t<DnsType> const &result_map,
                             RtType const &rt_args) {
-  if (result_map.empty()) {
-    std::error_code ec{};
-    if (std::filesystem::exists(rt_args.output_filename) &&
-        !std::filesystem::remove(rt_args.output_filename, ec)) {
-      printf("unable to remove %s", rt_args.output_filename.c_str());
-    }
-    return;
-  }
-
   json::array_t list;
   for (auto const &result_pair : result_map.cresult()) {
     json::object_t internal_object;
@@ -83,8 +80,39 @@ void write_json_result_impl(map_container_t<DnsType> const &result_map,
 
   res_object["program"] = "dooked";
   res_object["result"] = std::move(list);
-  (*rt_args.output_file) << json(res_object).dump(2) << "\n";
+  json previous = {{"result", json::array()}};
+  std::map<std::string, json> old_domains;
+  if (rt_args.previous_data) {
+    for (auto const &record : *rt_args.previous_data) {
+      auto &domain = old_domains[history_domain(record.domain_name)];
+      if (domain.is_null()) {
+        domain = {{"dns_probe", json::array()}, {"content_length", record.content_length},
+                  {"http_code", record.http_code}, {"code_string", code_string(record.http_code)}};
+      }
+      domain["dns_probe"].push_back(record.history_record);
+    }
+  }
+  for (auto const &domain : old_domains)
+    previous["result"].push_back(json{{domain.first, domain.second}});
+  auto now = static_cast<std::int64_t>(std::time(nullptr));
+  auto snapshot = merge_dns_history(json(res_object), previous, now);
+  (*rt_args.output_file) << snapshot.dump(2) << "\n";
   rt_args.output_file->close();
+  if (!silent) {
+    for (auto const &entry : snapshot["result"]) {
+      for (auto it = entry.begin(); it != entry.end(); ++it) {
+        for (auto const &record : it.value()["dns_probe"]) {
+          if (rt_args.first_seen && record["newly-observed"].template get<bool>())
+            std::cout << "[FIRST-SEEN][" << it.key() << "][" << record["type"].template get<std::string>()
+                      << "] " << record["info"].template get<std::string>() << "\n";
+          if (history_missing(record, now, rt_args.last_seen_days, rt_args.last_seen_cutoff))
+            std::cout << "[LAST-SEEN][" << it.key() << "][" << record["type"].template get<std::string>()
+                      << "] " << record["info"].template get<std::string>()
+                      << " (last-seen UTC epoch: " << record["last-seen"].dump() << ")\n";
+        }
+      }
+    }
+  }
 }
 
 template <typename T, typename Iterator>

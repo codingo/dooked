@@ -380,6 +380,10 @@ void start_name_checking(runtime_args_t &&rt_args) {
 
 void run_program(cli_args_t const &cli_args) {
   runtime_args_t rt_args{};
+  rt_args.first_seen = cli_args.first_seen;
+  rt_args.last_seen_days = cli_args.last_seen_days;
+  if (!cli_args.last_seen_date.empty())
+    rt_args.last_seen_cutoff = history_us_date(cli_args.last_seen_date);
   // settle resolvers.
   std::vector<std::string> resolver_strings{};
   if (cli_args.resolver_filename.empty()) {

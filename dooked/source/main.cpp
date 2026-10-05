@@ -48,12 +48,30 @@ int main(int argc, char **argv) {
                "bytes returned from the call to I/O socket read");
   app.add_flag("--silent", silent, "do not show any DNS or HTTP info");
 
+  app.add_flag("--fs", cli_args.first_seen, "report newly observed DNS records");
+  app.add_option("--ls", cli_args.last_seen_days,
+                 "report missing records last seen at least N days ago (0: all missing)")
+      ->check(CLI::NonNegativeNumber);
+  app.add_option("--lsd", cli_args.last_seen_date,
+                 "report missing records last seen before MM/DD/YYYY (UTC)");
+
   CLI11_PARSE(app, argc, argv);
+  if (!cli_args.last_seen_date.empty()) {
+    try { dooked::history_us_date(cli_args.last_seen_date); }
+    catch (std::exception const &error) {
+      std::cerr << error.what() << "\n";
+      return 1;
+    }
+  }
 
   if (!silent) {
     dooked::print_banner();
     fflush(stdout);
   }
-  dooked::run_program(cli_args);
+  try { dooked::run_program(cli_args); }
+  catch (std::exception const &error) {
+    std::cerr << error.what() << "\n";
+    return 1;
+  }
   return 0;
 }

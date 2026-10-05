@@ -35,6 +35,11 @@ x64/
 .vs/
 Debug/
 tests/
+!dooked/tests/
+!dooked/tests/*.cpp
+!dooked/tests/*.py
+__pycache__/
+*.pyc
 
 *.vcxproj
 *.vcxproj.*

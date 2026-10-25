@@ -23,6 +23,9 @@ struct cli_args_t {
   int file_type{};
   int post_http_request{};
   int thread_count{};
+  bool first_seen{false};
+  int last_seen_days{-1};
+  std::string last_seen_date{};
   int content_length{-1};
   bool include_date{false};
 };
@@ -35,6 +38,10 @@ struct runtime_args_t {
   std::string output_filename{};
   http_process_e http_request_time_{};
   int thread_count{};
+  bool first_seen{false};
+  int last_seen_days{-1};
+  std::string last_seen_date{};
+  bool history_silent{false};
   int content_length{-1};
 };
 

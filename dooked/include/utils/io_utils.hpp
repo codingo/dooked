@@ -1,6 +1,7 @@
 #pragma once
 
 #include "utils/containers.hpp"
+#include "utils/history.hpp"
 #include "utils/probe_result.hpp"
 #include <filesystem>
 #include <fstream>
@@ -30,6 +31,7 @@ struct json_data_t {
   int http_code{};
   int content_length{};
   dns_record_type_e type{};
+  json metadata = json::object();
 
   static json_data_t serialize(std::string const &d, int const len,
                                int const http_code,
@@ -40,6 +42,7 @@ struct json_data_t {
         dns_str_to_record_type(json_object["type"].get<json::string_t>());
     data.rdata = json_object["info"].get<json::string_t>();
     data.ttl = json_object["ttl"].get<json::number_integer_t>();
+    data.metadata = json_object;
     data.content_length = len;
     data.http_code = http_code;
     return data;
@@ -57,15 +60,6 @@ namespace detail {
 template <typename DnsType, typename RtType>
 void write_json_result_impl(map_container_t<DnsType> const &result_map,
                             RtType const &rt_args) {
-  if (result_map.empty()) {
-    std::error_code ec{};
-    if (std::filesystem::exists(rt_args.output_filename) &&
-        !std::filesystem::remove(rt_args.output_filename, ec)) {
-      printf("unable to remove %s", rt_args.output_filename.c_str());
-    }
-    return;
-  }
-
   json::array_t list;
   for (auto const &result_pair : result_map.cresult()) {
     json::object_t internal_object;
@@ -78,6 +72,36 @@ void write_json_result_impl(map_container_t<DnsType> const &result_map,
     json::object_t object;
     object[result_pair.first] = internal_object;
     list.push_back(std::move(object));
+  }
+  json::array_t previous;
+  if (rt_args.previous_data) {
+    for (auto const &record : *rt_args.previous_data) {
+      json details{{"dns_probe", json::array({record.metadata})},
+                   {"content_length", record.content_length},
+                   {"http_code", record.http_code},
+                   {"code_string", code_string(record.http_code)}};
+      previous.push_back(json{{record.domain_name, details}});
+    }
+  }
+  auto now = std::time(nullptr);
+  auto events = history::merge(list, previous, history::timestamp(now));
+  std::string cutoff;
+  if (rt_args.last_seen_days >= 0)
+    cutoff = history::timestamp(now - static_cast<std::time_t>(rt_args.last_seen_days) * 86400);
+  if (!rt_args.last_seen_date.empty())
+    cutoff = history::cutoff_date(rt_args.last_seen_date);
+  if (!rt_args.history_silent) {
+    for (auto const &event : events) {
+      if ((event.fresh && rt_args.first_seen) ||
+          (!event.fresh && !cutoff.empty() && event.record.contains("last-seen") &&
+           event.record["last-seen"].get<std::string>() < cutoff)) {
+        std::cout << (event.fresh ? "[FIRST-SEEN] " : "[LAST-SEEN] ")
+                  << event.domain << " [" << event.record["type"].get<std::string>()
+                  << "] " << event.record["info"].get<std::string>()
+                  << " since " << event.record[event.fresh ? "first-seen" : "last-seen"].get<std::string>()
+                  << "\n";
+      }
+    }
   }
   json::object_t res_object;
 

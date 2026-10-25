@@ -140,7 +140,7 @@ void compare_http_result(int const base_cl, json_data_t const &prev_http_result,
 
 void compare_results(std::vector<json_data_t> const &previous_result,
                      map_container_t<probe_result_t> const &current_result,
-                     int const content_length) {
+                     int const content_length, bool const history_mode) {
   if (!silent) {
     spdlog::info("Trying to compare old with new result");
   }
@@ -158,12 +158,18 @@ void compare_results(std::vector<json_data_t> const &previous_result,
   for (auto iter = previous_result.cbegin(); iter < end_iter;) {
     auto const current_find_iter = current_data_map.find(iter->domain_name);
     if (current_find_iter == current_data_map.end()) {
-      spdlog::error("{} not found in new result", iter->domain_name);
+      if (!history_mode)
+        spdlog::error("{} not found in new result", iter->domain_name);
       // find the next domain name following this current domain
       iter = std::upper_bound(iter, end_iter, *iter, domain_comparator);
       continue;
     }
     auto const &current_domain_info = current_find_iter->second;
+    if (history_mode) {
+      compare_http_result(content_length, *iter, current_domain_info.http_result_);
+      iter = std::upper_bound(iter, end_iter, *iter, domain_comparator);
+      continue;
+    }
     auto next_iter = compare_dns_result(iter, end_iter, current_domain_info,
                                         content_length, domain_comparator);
     iter = next_iter;
@@ -374,12 +380,18 @@ void start_name_checking(runtime_args_t &&rt_args) {
                 });
     }
     return compare_results(*rt_args.previous_data, result_map,
-                           rt_args.content_length);
+                           rt_args.content_length,
+                           rt_args.first_seen || rt_args.last_seen_days >= 0 ||
+                               !rt_args.last_seen_date.empty());
   }
 }
 
 void run_program(cli_args_t const &cli_args) {
   runtime_args_t rt_args{};
+  rt_args.first_seen = cli_args.first_seen;
+  rt_args.last_seen_days = cli_args.last_seen_days;
+  rt_args.last_seen_date = cli_args.last_seen_date;
+  rt_args.history_silent = silent;
   // settle resolvers.
   std::vector<std::string> resolver_strings{};
   if (cli_args.resolver_filename.empty()) {

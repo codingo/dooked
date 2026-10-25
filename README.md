@@ -39,3 +39,43 @@ make
 ## Usage
 
 For comprehensive help, use `dooked --help`
+
+### DNS record history
+
+JSON output stores `first-seen` and `last-seen` as UTC timestamps
+(`YYYY-MM-DDTHH:MM:SSZ`) and `seen` as the number of scans observing a record.
+Feed the previous JSON output back with `-i` to continue its history. Records
+are identified by domain, DNS type and value (case insensitive), so rotating
+addresses retain independent histories. Missing records remain in the output;
+they do not advance `last-seen` or `seen`.
+
+- `--fs`: report records observed for the first time in this scan.
+- `--ls N`: report records absent this scan whose last observation was more
+  than N days ago (`--ls 0` reports any dated absent records).
+- `--lsd MM/DD/YYYY`: report absent records last observed before that date,
+  at midnight UTC. This option and `--ls` are mutually exclusive.
+
+These flags replace immediate DNS change/missing alerts with history reports;
+HTTP comparisons still run. `--silent` suppresses history reports. History is
+saved even without the flags. For example:
+
+```sh
+dooked -i previous.json -o next --fs --ls 2
+```
+
+Legacy JSON files are accepted. A legacy record's first known timestamp and
+count start when it is next observed; an absent legacy record is preserved
+without an invented date and cannot trigger a date-based alert yet.
+
+Local regression tests (no network requests):
+
+```sh
+c++ -std=c++17 -Idooked/include -Idooked/json/single_include \
+  tests/history.cpp -o /tmp/dooked-history-test
+/tmp/dooked-history-test
+c++ -std=c++17 -Idooked/include -Idooked/json/single_include \
+  tests/history_writer.cpp dooked/source/utils/io_utils.cpp \
+  dooked/source/utils/constants.cpp dooked/source/utils/string_utils.cpp \
+  -o /tmp/dooked-writer-test
+/tmp/dooked-writer-test /tmp/dooked-history-output.json
+```
